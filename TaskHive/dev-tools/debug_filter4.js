@@ -1,0 +1,20 @@
+const { chromium } = require('playwright');
+const EXE = '/root/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell';
+(async () => {
+  const browser = await chromium.launch({ executablePath: EXE });
+  const page = await (await browser.newContext()).newPage();
+  page.on('pageerror', e => console.log('PAGEERR:', String(e).slice(0,200)));
+  await page.goto('http://localhost:3000/#/project/q3-plan');
+  await page.waitForSelector('#board-body .task-table tbody tr');
+  await page.click('.tab[data-tab="2"]'); await page.waitForTimeout(400);
+  await page.goto('http://localhost:3000/#/mytasks'); await page.waitForTimeout(500);
+  await page.goto('http://localhost:3000/#/projects'); await page.waitForTimeout(400);
+  await page.click('.project-card:first-child'); await page.waitForTimeout(400);
+  await page.goto('http://localhost:3000/#/project/q3-plan');
+  await page.waitForSelector('#board-body .assignee-name');
+  await page.selectOption('#flt-assignee', 'p1'); await page.waitForTimeout(400);
+  console.log('tbody class:', await page.evaluate(() => document.querySelector('#board-body .task-table tbody')?.id));
+  console.log('rows w/ names:', await page.$$eval('#board-body .task-table tbody tr', rs => rs.map(r => r.querySelector('.assignee-name')?.textContent || '(none)').slice(0,5)));
+  console.log('select value:', await page.inputValue('#flt-assignee'));
+  await browser.close();
+})();

@@ -1,0 +1,21 @@
+const EXE = '/root/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell';
+const { chromium } = require('playwright');
+(async () => {
+  const b = await chromium.launch({ executablePath: EXE });
+  const p = await b.newPage();
+  await p.goto('http://localhost:3000', { waitUntil: 'networkidle' });
+  await p.click('#show-signup'); await p.waitForTimeout(200);
+  await p.fill('#signup-name', 'Ada Lovelace');
+  await p.fill('#signup-email', `ada${Date.now()}@catlas.inc`);
+  await p.fill('#signup-password', 'calculus');
+  await p.click('#signup-form button[type=submit]');
+  await p.waitForTimeout(2500);
+  console.log('pageEl exists:', !!(await p.$('#page')) || await p.evaluate(() => typeof pageEl !== 'undefined' && !!pageEl));
+  console.log('pageEl innerHTML len:', await p.evaluate(() => typeof pageEl !== 'undefined' && pageEl ? pageEl.innerHTML.length : 'n/a'));
+  console.log('page text sample:', await p.evaluate(() => typeof pageEl !== 'undefined' && pageEl ? pageEl.textContent.slice(0,150) : 'n/a'));
+  console.log('task-table present:', !!(await p.$('.task-table')));
+  console.log('any tables:', await p.$$eval('table', t => t.length).catch(()=>0));
+  console.log('body classList:', await p.evaluate(() => document.body.className));
+  console.log('currentRoute:', await p.evaluate(() => typeof currentRoute !== 'undefined' ? currentRoute : 'n/a'));
+  await b.close();
+})();
