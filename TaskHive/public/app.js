@@ -832,7 +832,7 @@ function renderLoginScreen() {
         <label>Name<input id="signup-name" type="text" required placeholder="Ada Lovelace" autocomplete="name" /></label>
         <label>Email<input id="signup-email" type="email" required placeholder="ada@example.com" autocomplete="email" /></label>
         ${pwField('signup-password', 'Password (min 8 characters)', '••••••••', 'new-password')}
-        <label class="check-row"><input id="signup-sample" type="checkbox" checked /> Start with sample data (recommended for first login)</label>
+        <label class="check-row"><input id="signup-sample" type="checkbox" /> Start with sample data (a demo board to explore — you can add it anytime)</label>
         <button type="submit" class="btn btn-primary btn-block" id="signup-submit">Create account</button>
       </form>
       <div class="login-alt">Already registered? <a href="#/login" class="link-btn">Sign in</a></div>
