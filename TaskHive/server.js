@@ -814,25 +814,8 @@ function bootstrapPayload(ctx) {
 /* ------------------------------------------------------------------ */
 /* API routes                                                          */
 /* ------------------------------------------------------------------ */
-async function handleApi(req, res, url) {
-  const parts = url.pathname.replace(/^\/api\//, '').split('/').filter(Boolean);
-  const seg = parts[0] || '';
-  const param = parts[1];
-  const method = req.method;
-  const routeKey = parts.join('/');
-
-  /* --- health check (unauthenticated; used by Render health probes) --- */
-  if (seg === 'health' && method === 'GET') {
-    const counts = sqlite ? sqlite.prepare('SELECT (SELECT COUNT(*) FROM users) u, (SELECT COUNT(*) FROM tasks WHERE deleted_at IS NULL) t').get() : { u: 0, t: 0 };
-    return send(res, 200, { ok: true, service: 'taskhive', uptime: Math.round(process.uptime()) + 's',
-                            users: counts.u, tasks: counts.t, storage: sqlite ? 'sqlite-relational' : 'none' });
-  }
-
-  const ctx = authContext(req);
-
-  /* ================= AUTH API (/api/auth/*) ================= */
-  if (seg === 'auth') {
-    if (!sqlite) return send(res, 503, { error: 'database unavailable' });
+async function authHandler(req, res, ctx, routeKey, method) {
+if (!sqlite) return send(res, 503, { error: 'database unavailable' });
     // Global auth bucket applies only to credential endpoints (login/signup/demo).
     // Read-only session checks (/me, /logout) must not consume or trip it.
     if (routeKey !== 'me' && routeKey !== 'logout') {
@@ -926,16 +909,48 @@ async function handleApi(req, res, url) {
       if (ctx) destroySession(ctx.token);
       return send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie('deleted', 0) });
     }
+}
 
-    return send(res, 404, { error: 'unknown auth endpoint' });
+async function handleApi(req, res, url) {
+  let pathname = url.pathname;
+  /* Normalization: tolerate trailing slashes and deploy-time base prefixes
+   * (e.g. Render/Nginx serving the app under /taskhive). Without this, a
+   * path like /base/api/auth/signup would parse as seg='base' and every
+   * auth call would fall through to "unknown auth endpoint". */
+  const apiIdx = pathname.indexOf('/api/');
+  if (apiIdx > 0) pathname = pathname.slice(apiIdx);           // strip prefix before /api/
+  pathname = pathname.replace(/\/+$/, '') || '/';              // drop trailing slash(es)
+  const parts = pathname.replace(/^\/api\//, '').split('/').filter(Boolean);
+  const seg = parts[0] || '';
+  const param = parts[1];
+  const method = req.method;
+  const routeKey = parts.join('/');
+  if (process.env.TASKHIVE_DEBUG_ROUTES) console.error(`[routes] ${method} ${url.pathname} -> seg=${seg} routeKey=${routeKey}`);
+
+  /* --- health check (unauthenticated; used by Render health probes) --- */
+  if (seg === 'health' && method === 'GET') {
+    const counts = sqlite ? sqlite.prepare('SELECT (SELECT COUNT(*) FROM users) u, (SELECT COUNT(*) FROM tasks WHERE deleted_at IS NULL) t').get() : { u: 0, t: 0 };
+    return send(res, 200, { ok: true, service: 'taskhive', uptime: Math.round(process.uptime()) + 's',
+                            users: counts.u, tasks: counts.t, storage: sqlite ? 'sqlite-relational' : 'none' });
   }
 
-  /* Legacy aliases kept for older clients: /api/login /api/logout /api/session /api/signup */
-  if ((routeKey === 'login' && method === 'POST') || (routeKey === 'signup' && method === 'POST')) {
-    return handleApi(req, res, new URL(`/api/auth/${routeKey}`, 'http://x'));
+  const ctx = authContext(req);
+
+  /* ================= AUTH API (/api/auth/*) ================= */
+  if (seg === 'auth') return authHandler(req, res, ctx, routeKey, method);
+
+  /* Legacy aliases, 404, { error: 'unknown auth endpoint' });
   }
-  if (routeKey === 'logout' && method === 'POST') return handleApi(req, res, new URL('/api/auth/logout', 'http://x'));
-  if (routeKey === 'session' && method === 'GET') {
+
+  /* Legacy aliases kept for older clients: /api/login /api/logout /api/session.
+   * NOTE: do NOT re-enter handleApi here — with the path normalization above,
+   * /api/login would be rewritten to /api/auth/login and dispatch back into
+   * the auth block, recursing until the stack overflows (crashing the whole
+   * process). Delegate straight to the canonical handler instead. */
+  if ((seg === 'login' || seg === 'logout') && !sqlite) return send(res, 503, { error: 'database unavailable' });
+  if (seg === 'login'  && method === 'POST') return authHandler(req, res, ctx, 'login',  parts.slice(1).join('/'));
+  if (seg === 'logout' && method === 'POST') return authHandler(req, res, ctx, 'logout', parts.slice(1).join('/'));
+  if (seg === 'session' && method === 'GET') {
     return send(res, 200, ctx ? { user: publicUser(ctx.user) } : { user: null });
   }
 
