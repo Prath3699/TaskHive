@@ -22,7 +22,9 @@ let PROJECTS = [];
 let INBOX_ITEMS = [];
 let DISCUSSIONS = {};          // taskId -> [{ who, initials, color, text, at }]
 
-let ME = null;                 // current user id — set from GET /api/session (Phase 2 auth)
+let ME = null;                 // current user id — set from GET /api/auth/me + /api/bootstrap
+let WS = null;                 // active workspace { name, kind, readOnly } — drives trial banner & demo mode
+const TRIAL_DAYS = 14;         // personal workspaces show "N days left in your trial" from created_at
 const mePerson = () => ME ? PEOPLE.find(p => p.id === ME) : null;
 const meName  = () => (mePerson() || { name: 'Guest' }).name;
 const meInitials = () => (mePerson() || { initials: '??' }).initials;
@@ -72,9 +74,12 @@ const ATTACHMENTS = [
 const API_BASE = (window.TASKHIVE_API || '') + '/api';
 
 async function api(method, path, body) {
-  const res = await fetch(API_BASE + path, {
+  /* paths starting with '/' are API-relative (/tasks → /api/tasks);
+     paths already carrying the /api prefix pass through untouched. */
+  const url = path.startsWith('/api') ? API_BASE.replace(/\/api$/, '') + path : API_BASE + path;
+  const res = await fetch(url, {
     method,
-    credentials: 'same-origin',   // send the session cookie (Phase 2 auth)
+    credentials: 'same-origin',   // always send the httpOnly session cookie
     headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -111,14 +116,24 @@ function mutate(path, method, body, onSuccess, label) {
 }
 
 const patchTask    = (task, body, label) => mutate(`/tasks/${encodeURIComponent(task.id)}`, 'PATCH', body, null, label || 'Save failed');
-const deleteTaskApi = (task) => mutate(`/tasks/${encodeURIComponent(task.id)}`, 'DELETE', undefined, null, 'Delete failed');
+/* Demo workspaces answer 403 on mutations — surface the friendly copy and
+ * skip the optimistic-UI retry loop for those. */
+function guardDemoErr(err) {
+  if (err && err.status === 403) { toast('🔒 Demo workspace is read-only — create your own account to edit'); return true; }
+  return false;
+}
+const deleteTaskApi = (task) => api('DELETE', `/tasks/${encodeURIComponent(task.id)}`)
+  .catch(err => { if (!guardDemoErr(err)) { console.error('delete failed:', err); toast('⚠ Delete failed — try again'); } });
 const patchPrefs   = () => mutate('/prefs', 'PATCH', { savedIds, readFlags, ui: uiPrefs }, null, 'Preference sync failed');
-const patchInboxRead = (id) => mutate(`/inbox/${encodeURIComponent(id)}`, 'PATCH', { unread: false }, null, 'Read sync failed');
-const patchInboxReadAll = () => mutate('/inbox/read-all', 'PATCH', {}, null, 'Read sync failed');
+const patchInboxRead = (id) => api('PATCH', `/inbox/${encodeURIComponent(id)}`, { unread: false })
+  .catch(err => { if (!guardDemoErr(err)) console.error('read sync failed', err); });
+const patchInboxReadAll = () => api('PATCH', '/inbox/read-all', {})
+  .catch(err => { if (!guardDemoErr(err)) console.error('read sync failed', err); });
 const postComment = (taskId, text) => api('POST', `/discussions/${encodeURIComponent(taskId)}`, { text });
 const postChannelMsg = (key, text) => api('POST', `/channels/${encodeURIComponent(key)}`, { text });
 const saveProject = (name) => api('POST', '/projects', { name });
-const saveBoardOrder = (order) => mutate('/board', 'PATCH', { order }, null, 'Board order not saved');
+const saveBoardOrder = (order) => api('PATCH', '/board', { order })
+  .catch(err => { if (!guardDemoErr(err)) console.error('board order not saved', err); });
 const updateProfile = (body) => api('PATCH', `/people/${encodeURIComponent(ME)}`, body);
 
 function timeAgo(iso) {
@@ -763,10 +778,13 @@ function parseHash() {
   return { name: parts[0], param: parts[1] || null };
 }
 
-/* ============================ LOGIN SCREEN (Phase 2) ============================ */
-/* Full-page overlay rendered outside the router; shown when no session exists. */
+/* ============================ AUTH SCREENS (#/login · #/signup) ============ */
+/* Full-page overlay rendered outside the router; shown whenever no session
+ * exists. The hash route decides which card is painted; a route guard in
+ * render() keeps unauthenticated visitors on #/login or #/signup.          */
 
 let loginNotice = '';
+let pendingRoute = null;      // originally requested route, replayed after login
 
 function showLoginScreen(notice) {
   if (notice !== undefined) loginNotice = notice;
@@ -778,55 +796,154 @@ function hideLoginScreen() {
   document.body.classList.remove('show-login');
 }
 
+const eyeIcon = () => `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10s3-5.5 8-5.5S18 10 18 10s-3 5.5-8 5.5S2 10 2 10Z"/><circle cx="10" cy="10" r="2.4"/></svg>`;
+const eyeOffIcon = () => `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 6.6C1.9 8.2 2 10 2 10s3 5.5 8 5.5c1.6 0 3-.5 4.2-1.2M7.8 5.2A7.6 7.6 0 0 1 10 4.5c5 0 8 5.5 8 5.5a13 13 0 0 1-1.7 2.4M8.4 8.4a2.3 2.3 0 0 0 3.2 3.2M3 3l14 14"/></svg>`;
+
+function pwField(id, label, placeholder, autocomplete) {
+  return `<label>${label}<span class="pw-wrap">
+      <input id="${id}" type="password" required placeholder="${placeholder}" autocomplete="${autocomplete}" minlength="8" />
+      <button type="button" class="pw-toggle" data-toggle="${id}" aria-label="Show password" aria-pressed="false">${eyeIcon()}</button>
+    </span></label>`;
+}
+
 function renderLoginScreen() {
   const screen = $('#login-screen');
   if (!screen) return;
-  screen.innerHTML = `
-    <div class="login-card">
-      <div class="login-brand">
-        <div class="org-avatar" aria-hidden="true">
-          <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M6 8.5h16M4.5 14h19M6 19.5h16" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
-            <path d="M8 4h12l3 4.5H5L8 4Zm-3.5 5.5h19L26 14H2l2.5-4.5ZM5 19.5h18l-2.5 4.5H7.5L5 19.5Z" fill="#fff" opacity=".28"/>
-          </svg>
-        </div>
-        <h1>TaskHive</h1>
-        <p>Sign in to your workspace</p>
+  const mode = parseHash().name === 'signup' ? 'signup' : 'login';
+  const brand = `
+    <div class="login-brand">
+      <div class="org-avatar" aria-hidden="true">
+        <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M6 8.5h16M4.5 14h19M6 19.5h16" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+          <path d="M8 4h12l3 4.5H5L8 4Zm-3.5 5.5h19L26 14H2l2.5-4.5ZM5 19.5h18l-2.5 4.5H7.5L5 19.5Z" fill="#fff" opacity=".28"/>
+        </svg>
       </div>
-      ${loginNotice ? `<div class="login-notice">${esc(loginNotice)}</div>` : ''}
-      <form id="login-form" autocomplete="on">
-        <label>Email<input id="login-email" type="email" required placeholder="you@catlas.inc" value="parth@catlas.inc" /></label>
-        <label>Password<input id="login-password" type="password" required placeholder="••••••••" value="password" /></label>
+      <h1>TaskHive</h1>
+      <p>${mode === 'signup' ? 'Create your workspace' : 'Sign in to your workspace'}</p>
+    </div>`;
+  const notice = loginNotice ? `<div class="login-notice" role="alert">${esc(loginNotice)}</div>` : '';
+  const demoBtn = `<button id="demo-login" class="btn btn-ghost btn-block" type="button">Try the demo workspace</button>
+      <div class="login-hint">Explore TaskHive with the classic Catlas sample board — read-only, resettable, no account needed.</div>`;
+  if (mode === 'signup') {
+    screen.innerHTML = `
+    <div class="login-card">
+      ${brand}${notice}
+      <form id="signup-form" autocomplete="on" novalidate>
+        <label>Name<input id="signup-name" type="text" required placeholder="Ada Lovelace" autocomplete="name" /></label>
+        <label>Email<input id="signup-email" type="email" required placeholder="ada@example.com" autocomplete="email" /></label>
+        ${pwField('signup-password', 'Password (min 8 characters)', '••••••••', 'new-password')}
+        <label class="check-row"><input id="signup-sample" type="checkbox" checked /> Start with sample data (recommended for first login)</label>
+        <button type="submit" class="btn btn-primary btn-block" id="signup-submit">Create account</button>
+      </form>
+      <div class="login-alt">Already registered? <a href="#/login" class="link-btn">Sign in</a></div>
+      ${demoBtn}
+    </div>`;
+  } else {
+    screen.innerHTML = `
+    <div class="login-card">
+      ${brand}${notice}
+      <form id="login-form" autocomplete="on" novalidate>
+        <label>Email<input id="login-email" type="email" required placeholder="you@example.com" autocomplete="email" /></label>
+        ${pwField('login-password', 'Password', '••••••••', 'current-password')}
         <button type="submit" class="btn btn-primary btn-block" id="login-submit">Sign in</button>
       </form>
-      <div class="login-alt">New here? <button id="show-signup" class="link-btn" type="button">Create an account</button></div>
-      <form id="signup-form" class="hidden">
-        <label>Name<input id="signup-name" type="text" required placeholder="Ada Lovelace" /></label>
-        <label>Email<input id="signup-email" type="email" required placeholder="ada@catlas.inc" /></label>
-        <label>Password<input id="signup-password" type="password" required minlength="4" placeholder="min 4 characters" /></label>
-        <button type="submit" class="btn btn-primary btn-block">Create account</button>
-        <div class="login-alt">Already registered? <button id="show-login" class="link-btn" type="button">Sign in</button></div>
-      </form>
-      <div class="login-hint">Demo accounts — any seeded teammate with password <code>password</code>:<br>
-        parth@ · david@ · maya@ · alex@ · sara@ <em>catlas.inc</em></div>
+      <div class="login-alt">New here? <a href="#/signup" class="link-btn">Create an account</a></div>
+      ${demoBtn}
     </div>`;
+  }
+  /* wire show/hide password toggles */
+  screen.querySelectorAll('.pw-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const inp = document.getElementById(btn.dataset.toggle);
+      if (!inp) return;
+      const show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+      btn.setAttribute('aria-pressed', String(show));
+      btn.innerHTML = show ? eyeOffIcon() : eyeIcon();
+    });
+  });
+}
+
+/* Shared submit handler: loading state on the button + inline error notice. */
+function runAuthForm(kind, body, btnId, busyLabel) {
+  const btn = $('#' + btnId);
+  if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = busyLabel; }
+  const fail = (err) => {
+    if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label || 'Submit'; }
+    loginNotice = err.message || 'Something went wrong — try again';
+    renderLoginScreen();
+  };
+  api('POST', `/auth/${kind}`, body)
+    .then(afterAuthSuccess)
+    .catch(fail);
+}
+
+/* Trial banner: driven by the real workspace creation date (14-day trial). */
+const TRIAL_LEN_DAYS = 14;
+function trialDaysLeft() {
+  if (!WS || !WS.createdAt) return null;
+  const ms = Date.now() - new Date(WS.createdAt).getTime();
+  return Math.max(0, TRIAL_LEN_DAYS - Math.floor(ms / 86400e3));
+}
+function updateTrialCard() {
+  const card = document.querySelector('.trial-card');
+  if (!card) return;
+  if (!ME) { card.style.display = 'none'; return; }
+  if (WS && WS.kind === 'demo') {
+    card.style.display = '';
+    card.innerHTML = `<p>You are viewing the <strong>demo workspace</strong> — read-only.<br/>Create your own account to save changes.</p>
+      <button id="reset-demo-btn" class="btn btn-primary btn-sm">Reset demo data</button>`;
+    return;
+  }
+  const left = trialDaysLeft();
+  if (left === null) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  card.innerHTML = left > 0
+    ? `<p>There${left === 1 ? ' is <strong>1 day</strong>' : ` are <strong>${left} days</strong>`} left in your trial.<br />Upgrade for unlimited access.</p>
+       <button id="upgrade-btn" class="btn btn-primary btn-sm">Upgrade</button>`
+    : `<p>Your trial has ended. Upgrade to keep your workspace.</p>
+       <button id="upgrade-btn" class="btn btn-primary btn-sm">Upgrade</button>`;
+}
+
+function afterAuthSuccess(d) {
+  authExpired = false;
+  ME = d.user.id;
+  WS = d.workspace || null;
+  try { localStorage.setItem('th_session_hint', '1'); } catch (_) {}   // skeleton hint for next boot
+  hideLoginScreen();
+  return loadBootstrap().then(() => {
+    if (pendingRoute && !/^#\/(login|signup|home)$/.test(pendingRoute)) {
+      location.hash = pendingRoute;
+    } else if (/^#?\/?(login|signup)?$/.test(location.hash.replace('#', ''))) {
+      location.hash = '#/home';
+    }
+    pendingRoute = null;
+    render();
+    toast(`👋 Welcome, ${meName().split(' ')[0]}!`);
+  });
 }
 
 function doLogin(email, password) {
-  return api('POST', '/login', { email, password }).then(d => {
-    authExpired = false;
-    ME = d.user.id;
-    try { localStorage.setItem('th_session_hint', '1'); } catch (_) {}   // skeleton hint for next boot
-    hideLoginScreen();
-    return loadBootstrap();
+  return api('POST', '/auth/login', { email, password }).then(afterAuthSuccess);
+}
+
+function doDemoLogin() {
+  return api('POST', '/auth/demo', {}).then(afterAuthSuccess).catch(err => {
+    loginNotice = err.message || 'Demo workspace unavailable';
+    renderLoginScreen();
   });
 }
 
 function doLogout() {
-  return api('POST', '/logout', {}).catch(() => {}).then(() => {
-    ME = null; savedIds = []; readFlags = {};
+  return api('POST', '/auth/logout', {}).catch(() => {}).then(() => {
+    ME = null; WS = null; savedIds = []; readFlags = {};
+    PEOPLE = []; TASKS = []; PROJECTS = []; INBOX_ITEMS = []; DISCUSSIONS = {}; CHANNEL_MESSAGES = {};
     try { localStorage.removeItem('th_session_hint'); } catch (_) {}
-    showLoginScreen('Signed out.');
+    pendingRoute = null;
+    updateTrialCard();
+    if (location.hash !== '#/login') location.hash = '#/login';
+    else { renderLoginScreen(); showLoginScreen('Signed out.'); }
   });
 }
 
@@ -879,15 +996,35 @@ function renderErrorView(err) {
 }
 
 function render() {
-  if (!ME) { showLoginScreen('Please sign in to continue.'); }   // session lost mid-use
   const { name, param } = parseHash();
+
+  /* ---- route guard: unauthenticated visitors only ever see #/login or #/signup ---- */
+  if (!ME) {
+    if (name !== 'login' && name !== 'signup') {
+      pendingRoute = location.hash || '#/home';
+      loginNotice = 'Please sign in to continue.';
+      location.hash = '#/login';          // fires hashchange → render() again, guarded below
+      return;
+    }
+    renderLoginScreen();
+    showLoginScreen();
+    return;
+  }
+  /* authenticated users never sit on the auth screens */
+  if (name === 'login' || name === 'signup') {
+    hideLoginScreen();
+    location.hash = '#/home';
+    return;
+  }
+
   const fn = routes[name] || routes.home;
   currentRoute = name;
+  updateTrialCard();
   // Show skeletons when navigating before bootstrap data has arrived.
   // (If loadBootstrap already painted them, keep its markup — don't re-inject.)
   if (!PEOPLE.length && !document.body.classList.contains('show-login') && !pageEl.querySelector('.sk-row,.sk-card,.sk-col')) {
     pageEl.innerHTML = skeletonHtml(name === 'projects' ? 'cards' : 'board');
-  } else if (PEOPLE.length) {
+  } else if (PEOPLE.length || TASKS.length || PROJECTS.length) {
     try {
       pageEl.innerHTML = fn(param);
     } catch (err) {
@@ -2059,11 +2196,18 @@ async function loadBootstrap() {
     INBOX_ITEMS   = d.inbox || [];
     DISCUSSIONS   = d.discussions || {};
     CHANNEL_MESSAGES = d.messages || {};
-    if (d.user) { ME = d.user.id; try { localStorage.setItem('th_session_hint', '1'); } catch (_) {} hideLoginScreen(); }   // session cookie present — enter workspace
-    else {
+    if (d.user) {
+      ME = d.user.id;                                       // session restored via cookie → /api/auth/me path
+      WS = d.workspace || null;
+      try { localStorage.setItem('th_session_hint', '1'); } catch (_) {}
+      hideLoginScreen();
+    } else {
       clearSk();                                          // skeletons are meaningless behind the login overlay
       try { localStorage.removeItem('th_session_hint'); } catch (_) {}
-      showLoginScreen(); return;
+      ME = null;
+      if (!/^#\/(login|signup)/.test(location.hash)) location.hash = '#/login';
+      else { renderLoginScreen(); showLoginScreen(); }
+      return;
     }
     // server prefs win over the stale localStorage cache
     savedIds = Array.isArray(d.savedIds) ? d.savedIds.filter(x => typeof x === 'string') : [];
@@ -2076,11 +2220,18 @@ async function loadBootstrap() {
     }
     INBOX_ITEMS.forEach(it => { if (it.unread === false) readFlags[it.id] = true; });
     persist(); // push merged prefs back into the per-user cache/server copy
-    nextTaskNum = Math.max(100, ...TASKS.map(t => parseInt(String(t.id).replace(/\D/g, ''), 10) || 0)) + 1;
+    nextTaskNum = TASKS.length ? Math.max(100, ...TASKS.map(t => parseInt(String(t.id).replace(/\D/g, ''), 10) || 0)) + 1 : 100;
   } catch (err) {
     console.error('bootstrap failed:', err);
     clearTimeout(skTimer); clearSk();
-    if (err.status === 401) { ME = null; showLoginScreen('Please sign in to continue.'); renderLoginScreen(); return; }
+    if (err.status === 401) {
+      ME = null; WS = null;
+      try { localStorage.removeItem('th_session_hint'); } catch (_) {}
+      loginNotice = 'Please sign in to continue.';
+      if (!/^#\/(login|signup)/.test(location.hash)) location.hash = '#/login';
+      else { renderLoginScreen(); showLoginScreen(); }
+      return;
+    }
     hideLoginScreen();
     pageEl.innerHTML = `<section class="page-pad"><div class="empty-state">⚠ Could not reach the server.<br>
       Start it with <code>npm start</code>, then refresh this page.</div></section>`;
@@ -2088,54 +2239,47 @@ async function loadBootstrap() {
   }
   const loading = $('#boot-loading');
   if (loading) loading.remove();
-  if (!location.hash) location.hash = '#/home';
+  updateTrialCard();
+  if (!location.hash || /^#\/?(login|signup)?$/.test(location.hash.replace('#', ''))) location.hash = '#/home';
   render();
 }
 
-/* Login-screen wiring (delegated so it survives re-renders) */
+/* Auth-screen wiring (delegated so it survives re-renders) */
 document.body.addEventListener('submit', (e) => {
   if (e.target.id === 'login-form') {
     e.preventDefault();
-    const btn = $('#login-submit');
-    if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
-    doLogin($('#login-email').value, $('#login-password').value)
-      .catch(err => {
-        if (btn) { btn.disabled = false; btn.textContent = 'Sign in'; }
-        loginNotice = err.message || 'Sign-in failed';
-        renderLoginScreen();
-      });
+    runAuthForm('login', { email: $('#login-email').value.trim(), password: $('#login-password').value },
+                'login-submit', 'Signing in…');
   }
   if (e.target.id === 'signup-form') {
     e.preventDefault();
-    api('POST', '/signup', {
+    runAuthForm('signup', {
       name: $('#signup-name').value.trim(),
       email: $('#signup-email').value.trim(),
       password: $('#signup-password').value,
-    }).then(d => {
-      authExpired = false;
-      ME = d.user.id;
-      try { localStorage.setItem('th_session_hint', '1'); } catch (_) {}
-      hideLoginScreen();
-      return loadBootstrap();
-    }).catch(err => {
-      loginNotice = err.message || 'Sign-up failed';
-      renderLoginScreen();
-      const sf = $('#signup-form');   // reopen the signup panel with the error visible
-      if (sf) { sf.classList.remove('hidden'); $('#show-signup')?.closest('.login-card').querySelector('.login-alt')?.classList.add('hidden'); }
-    });
+      sampleData: !!$('#signup-sample')?.checked,
+    }, 'signup-submit', 'Creating account…');
   }
 });
 
 document.body.addEventListener('click', (e) => {
-  const el = e.target.closest('#show-signup, #show-login');
-  if (!el) return;
-  const sf = $('#signup-form'), lf = $('#login-form'), alt = $('#show-signup')?.parentElement;
-  if (el.id === 'show-signup') { if (sf) sf.classList.remove('hidden'); if (lf) lf.classList.add('hidden'); if (alt) alt.classList.add('hidden'); }
-  else { if (sf) sf.classList.add('hidden'); if (lf) lf.classList.remove('hidden'); if (alt) alt.classList.remove('hidden'); }
+  const demo = e.target.closest('#demo-login');
+  if (demo) { demo.disabled = true; demo.textContent = 'Loading demo…'; doDemoLogin(); return; }
+  const reset = e.target.closest('#reset-demo-btn');
+  if (reset) {
+    api('POST', '/auth/demo/reset', {}).then(() => {
+      toast('↺ Demo data reset to its original state');
+      return loadBootstrap();
+    }).catch(err => { guardDemoErr(err) || toast(`⚠ ${err.message}`); });
+    return;
+  }
+  const up = e.target.closest('#upgrade-btn');
+  if (up) { toast('💎 Upgrade coming soon — your workspace stays fully usable meanwhile.'); return; }
 });
 
-/* Boot: always start on the login screen; if a session cookie exists the
-   workspace hydrates immediately behind it (loadBootstrap hides the overlay). */
+/* Boot: restore the session from the cookie (/api/bootstrap → /api/auth/me).
+   If unauthenticated, loadBootstrap + the render() route guard land the user
+   on #/login. */
 function boot() {
   renderLoginScreen();
   showLoginScreen();
