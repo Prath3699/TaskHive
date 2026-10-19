@@ -428,12 +428,12 @@ function insertDemoContent(wsId, personKeys) {
  * something to show right away (matches "onboarding sample data"). */
 function provisionUser(userId, { sample }) {
   const u = sqlite.prepare('SELECT * FROM users WHERE id=?').get(userId);
-  const isFirst = !getMeta('first_user_id');
-  if (isFirst) setMeta('first_user_id', String(userId));
   const wsId = createWorkspace(`${u.name.split(' ')[0]}'s workspace`, 'personal', userId);
   addMembership(wsId, userId, 'admin');
   wsStmt.counterBump().run(wsId, 100, 1);
   if (sample) {
+    /* Onboarding sample data: every seeded person maps to the new user, so
+     * the classic demo board becomes a realistic single-user playground. */
     insertDemoContent(wsId, { p1: userId, p2: userId, p3: userId, p4: userId, p5: userId });
   }
   return wsId;
@@ -858,7 +858,7 @@ async function handleApi(req, res, url) {
       }
       const color = AVATAR_PALETTE[Math.floor(Math.random() * AVATAR_PALETTE.length)];
       const userId = createUser({ name, email, password, color, isDemo: false });
-      const wantsSample = !!b.sampleData;
+      const wantsSample = b.sampleData !== false && b.sampleData !== 0 && b.sampleData !== 'false';
       const wsId = provisionUser(userId, { sample: wantsSample });
       sqlite.prepare('UPDATE users SET last_login=? WHERE id=?').run(new Date().toISOString(), userId);
       const token = createSession(userId, wsId);
@@ -1327,7 +1327,11 @@ function serveStatic(req, res, url) {
 /* Server                                                              */
 /* ------------------------------------------------------------------ */
 if (IS_MODULE) {
-  module.exports = { handleApi, readBody, seedData: () => null };
+  /* Netlify wrapper (netlify/functions/api.mjs) calls loadDbAsync/flushSaves;
+   * the relational store needs a persistent disk, so these are no-ops there —
+   * the wrapper sets TASKHIVE_READONLY_API and auth reads still work in memory. */
+  module.exports = { handleApi, readBody, seedData: () => null,
+                    loadDbAsync: async () => {}, flushSaves: async () => {} };
 } else {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
