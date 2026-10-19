@@ -387,8 +387,15 @@ function addMembership(wsId, userId, role) {
 function insertDemoContent(wsId, personKeys) {
   const pk = (k) => personKeys[k] != null ? String(personKeys[k]) : null;
   const now = Date.now();
+  /* Single-owner mode: when onboarding sample data is inserted, every seed
+   * "person" maps to the same new user. In that case we must NOT list the
+   * duplicate ids repeatedly as project members or the UI renders rows of
+   * phantom teammates ("tasks already assigned to others"). */
+  const ownerOnly = new Set(Object.values(personKeys).map(v => String(v))).size === 1;
+  const memberList = (fallbackKey) => ownerOnly ? [pk(fallbackKey || 'p1')]
+                                                : SEED_PEOPLE.map(p => pk(p.key)).filter(Boolean);
   for (const pr of SEED_PROJECTS) {
-    const members = pr.id === 'internal-tools' ? [pk('p4')] : SEED_PEOPLE.map(p => pk(p.key)).filter(Boolean);
+    const members = pr.id === 'internal-tools' && !ownerOnly ? [pk('p4')] : memberList('p1');
     wsStmt.projectUpsert().run({ id: pr.id, workspace_id: wsId, name: pr.name, descr: pr.desc, members: JSON.stringify(members), idx: SEED_PROJECTS.indexOf(pr) });
   }
   /* 17 design-mockup tasks + 2 per extra project so boards aren't dead ends */
@@ -850,7 +857,10 @@ if (!sqlite) return send(res, 503, { error: 'database unavailable' });
       }
       const color = AVATAR_PALETTE[Math.floor(Math.random() * AVATAR_PALETTE.length)];
       const userId = createUser({ name, email, password, color, isDemo: false });
-      const wantsSample = b.sampleData !== false && b.sampleData !== 0 && b.sampleData !== 'false';
+      /* Sample data is strictly OPT-IN: only seed when the checkbox was ticked.
+   * (Previously everything except explicit false/0/'false' counted as a yes,
+   * so unchecked forms / non-boolean payloads still got the demo board.) */
+  const wantsSample = b.sampleData === true || b.sampleData === 1 || b.sampleData === 'true';
       const wsId = provisionUser(userId, { sample: wantsSample });
       sqlite.prepare('UPDATE users SET last_login=? WHERE id=?').run(new Date().toISOString(), userId);
       const token = createSession(userId, wsId);
@@ -940,7 +950,7 @@ async function handleApi(req, res, url) {
   const ctx = authContext(req);
 
   /* ================= AUTH API (/api/auth/*) ================= */
-  if (seg === 'auth') return authHandler(req, res, ctx, routeKey, method);
+  if (seg === 'auth') return authHandler(req, res, ctx, parts.slice(1).join('/'), method);
 
   /* Legacy aliases kept for older clients: /api/login /api/logout /api/session.
    * NOTE: do NOT re-enter handleApi here — with the path normalization above,

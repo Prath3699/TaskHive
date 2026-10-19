@@ -38,7 +38,14 @@ start_server() { # start_server <logfile> [bypass=1]
   echo "server did not become healthy; log:"; cat "$log"; exit 1
 }
 stop_servers() { for p in $SRV_PIDS; do kill "$p" 2>/dev/null; done; SRV_PIDS=""; }
-restart_server() { stop_servers; sleep 0.3; }
+wait_healthy() { # wait until /api/health answers (up to ~8s)
+  for _ in $(seq 1 40); do
+    curl -s -o /dev/null "http://localhost:$PORT/api/health" && return 0
+    sleep 0.2
+  done
+  return 1
+}
+restart_server() { stop_servers; sleep 0.3; wait_healthy || true; }
 if ! curl -s -o /dev/null "http://localhost:$PORT/api/health"; then
   echo "(starting TaskHive server on :$PORT, data dir $DATA_DIR)"
   start_server /tmp/th_server.log 1
@@ -71,6 +78,20 @@ SIGNUP_HDR=$(curl -s -D - -o /tmp/signup_a.json -w '' -X POST $B/auth/signup -H 
 chk "201 signup" 201 "$(echo "$SIGNUP_HDR" | awk '/HTTP\//{print $2}' | tail -1)"
 if echo "$SIGNUP_HDR" | grep -iq 'set-cookie:.*httponly'; then PASS=$((PASS+1)); echo "ok   session cookie is httpOnly"; else FAIL=$((FAIL+1)); echo "FAIL session cookie not httpOnly"; fi
 chk "signup returns user id" true "$(node -pe 'const j=require("/tmp/signup_a.json");!!j.user&&!!j.user.id' 2>/dev/null || echo false)"
+
+echo "== new signup WITHOUT sampleData starts with an EMPTY workspace =="
+ESIGN=$(curl -s -c /tmp/emptyjar.txt -X POST $B/auth/signup -H 'Content-Type: application/json' -d "{\"name\":\"Empty WS\",\"email\":\"empty-$STAMP@test.dev\",\"password\":\"$PW\"}")
+if echo "$ESIGN" | grep -q '"user"'; then PASS=$((PASS+1)); echo "ok   empty signup succeeded"; else FAIL=$((FAIL+1)); echo "FAIL empty signup: $ESIGN"; fi
+EBOOT=$(curl -s -b /tmp/emptyjar.txt $B/bootstrap)
+chk "no tasks for fresh user" 0 "$(echo "$EBOOT" | node -pe 'JSON.parse(require("fs").readFileSync(0)).tasks.length' 2>/dev/null || echo -1)"
+chk "no phantom teammates" 1 "$(echo "$EBOOT" | node -pe 'new Set(JSON.parse(require("fs").readFileSync(0)).people.map(p=>p.name)).size' 2>/dev/null || echo -1)"
+
+echo "== new signup WITH sampleData:true gets sample board, single member list =="
+SSIGN=$(curl -s -c /tmp/samjar.txt -X POST $B/auth/signup -H 'Content-Type: application/json' -d "{\"name\":\"Sample WS\",\"email\":\"sample-$STAMP@test.dev\",\"password\":\"$PW\",\"sampleData\":true}")
+SBOOT=$(curl -s -b /tmp/samjar.txt $B/bootstrap)
+chk "sample user has tasks" true "$(echo "$SBOOT" | node -pe 'JSON.parse(require("fs").readFileSync(0)).tasks.length>0' 2>/dev/null || echo false)"
+chk "sample people == just the user" 1 "$(echo "$SBOOT" | node -pe 'JSON.parse(require("fs").readFileSync(0)).people.length' 2>/dev/null || echo -1)"
+chk "project members de-duplicated" true "$(echo "$SBOOT" | node -pe 'const d=JSON.parse(require("fs").readFileSync(0));d.projects.every(p=>!Array.isArray(p.members)||p.members.length<=1)' 2>/dev/null || echo false)"
 
 echo "== duplicate email rejected with clear message (expect 409) =="
 DUP=$(curl -s -X POST $B/auth/signup -H 'Content-Type: application/json' -d "{\"name\":\"ISO User A again\",\"email\":\"$EA\",\"password\":\"$PW\"}")
