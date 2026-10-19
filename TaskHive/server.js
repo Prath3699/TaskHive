@@ -940,7 +940,7 @@ async function handleApi(req, res, url) {
   const ctx = authContext(req);
 
   /* ================= AUTH API (/api/auth/*) ================= */
-  if (seg === 'auth') return authHandler(req, res, ctx, routeKey, method);
+  if (seg === 'auth') return authHandler(req, res, ctx, parts.slice(1).join('/'), method);
 
   /* Legacy aliases kept for older clients: /api/login /api/logout /api/session.
    * NOTE: do NOT re-enter handleApi here — with the path normalization above,
