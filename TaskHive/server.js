@@ -628,6 +628,10 @@ function personView(u) {
 /* ------------------------------------------------------------------ */
 const rateBuckets = new Map(); // key -> { count, reset }
 function rateLimit(key, limit, windowMs) {
+  // Test hook: TASKHIVE_RATE_LIMIT_BYPASS=1 disables all rate limiting so the
+  // smoke suite can run many auth attempts. The suite re-enables the limiter
+  // for its dedicated 429 test by restarting the server without this env var.
+  if (process.env.TASKHIVE_RATE_LIMIT_BYPASS === '1') return { allowed: true, retryAfter: 0 };
   const now = Date.now();
   let b = rateBuckets.get(key);
   if (!b || b.reset <= now) { b = { count: 0, reset: now + windowMs }; rateBuckets.set(key, b); }
@@ -829,8 +833,12 @@ async function handleApi(req, res, url) {
   /* ================= AUTH API (/api/auth/*) ================= */
   if (seg === 'auth') {
     if (!sqlite) return send(res, 503, { error: 'database unavailable' });
-    const rl = rateLimit(`auth:${clientIp(req)}`, 20, 60e3);
-    if (!rl.allowed) return send(res, 429, { error: 'Too many attempts — try again later' }, { 'Retry-After': String(rl.retryAfter) });
+    // Global auth bucket applies only to credential endpoints (login/signup/demo).
+    // Read-only session checks (/me, /logout) must not consume or trip it.
+    if (routeKey !== 'me' && routeKey !== 'logout') {
+      const rl = rateLimit(`auth:${clientIp(req)}`, 20, 60e3);
+      if (!rl.allowed) return send(res, 429, { error: 'Too many attempts — try again later' }, { 'Retry-After': String(rl.retryAfter) });
+    }
 
     /* GET /api/auth/me — restore the session on app load */
     if (routeKey === 'me' && method === 'GET') {
