@@ -3,10 +3,47 @@
 # Covers: signup validation, duplicate email, generic login failure, httpOnly
 # session cookie, session persistence after refresh, logout invalidation,
 # rate limiting (429), protected routes without auth, and two-user data isolation.
-B=http://localhost:3000/api
+PORT="${TH_PORT:-3000}"
+B=http://localhost:$PORT/api
 JAR=/tmp/taskhive_test_cookies.txt
 rm -f $JAR
 PASS=0; FAIL=0
+
+# ---- self-managed server lifecycle ----------------------------------------
+# The suite restarts the server mid-run (to exercise the real rate limiter),
+# so it owns its own server process. Start one if nothing is listening yet,
+# and always clean up our own child processes on exit. NEVER use a broad
+# pkill pattern — it can match this very script's command line and kill the
+# test run itself.
+DATA_DIR="${TASKHIVE_DATA_DIR:-$(cd "$(dirname "$0")" && pwd)/data}"
+SRV_PIDS=""
+start_server() { # start_server <logfile> [bypass=1]
+  local log="$1" bypass="${2:-}"
+  local pid
+  if [ -n "$bypass" ]; then
+    TASKHIVE_RATE_LIMIT_BYPASS=1 TASKHIVE_DATA_DIR="$DATA_DIR" PORT="$PORT" \
+      node "$(dirname "$0")/server.js" > "$log" 2>&1 &
+  else
+    TASKHIVE_DATA_DIR="$DATA_DIR" PORT="$PORT" \
+      node "$(dirname "$0")/server.js" > "$log" 2>&1 &
+  fi
+  pid=$!
+  SRV_PIDS="$SRV_PIDS $pid"
+  # wait for /api/health (up to ~8s)
+  for _ in $(seq 1 40); do
+    curl -s -o /dev/null "http://localhost:$PORT/api/health" && return 0
+    kill -0 "$pid" 2>/dev/null || { echo "server died; log:"; cat "$log"; exit 1; }
+    sleep 0.2
+  done
+  echo "server did not become healthy; log:"; cat "$log"; exit 1
+}
+stop_servers() { for p in $SRV_PIDS; do kill "$p" 2>/dev/null; done; SRV_PIDS=""; }
+restart_server() { stop_servers; sleep 0.3; }
+if ! curl -s -o /dev/null "http://localhost:$PORT/api/health"; then
+  echo "(starting TaskHive server on :$PORT, data dir $DATA_DIR)"
+  start_server /tmp/th_server.log 1
+fi
+trap 'stop_servers' EXIT
 chk() { # chk <desc> <expected> <actual>
   if [ "$2" = "$3" ]; then PASS=$((PASS+1)); echo "ok   $1";
   else FAIL=$((FAIL+1)); echo "FAIL $1 (expected=$2 got=$3)"; fi
@@ -55,7 +92,13 @@ echo "== login as user A (demo password login kept below for legacy checks) =="
 chk "200 login A" 200 "$(curl -s -c $JAR -o /dev/null -w '%{http_code}' -X POST $B/auth/login -d "{\"email\":\"$EA\",\"password\":\"$PW\"}")"
 
 echo "== last_login updated after login =="
-LL=$(sqlite3 "${TASKHIVE_DATA_DIR:-$(cd "$(dirname "$0")" && pwd)/data}/taskhive.db" "SELECT last_login FROM users WHERE email='$EA';" 2>/dev/null)
+LL=$(node -e '
+  const DB = require(require("path").join(__dirname, "node_modules", "better-sqlite3"));
+  const dir = process.env.TASKHIVE_DATA_DIR || require("path").join(__dirname, "data");
+  const db = new DB(require("path").join(dir, "taskhive.db"), { readonly: true });
+  const r = db.prepare("SELECT last_login FROM users WHERE email=?").get(process.argv[1]);
+  console.log(r && r.last_login ? r.last_login : "");
+' "$EA" 2>/dev/null)
 if [ -n "$LL" ]; then PASS=$((PASS+1)); echo "ok   last_login set ($LL)"; else FAIL=$((FAIL+1)); echo "FAIL last_login empty (or sqlite3 CLI unavailable — skip)"; fi
 
 echo "== session reflects user =="
@@ -145,10 +188,10 @@ echo "== unknown endpoint (expect 404) =="
 chk "404 unknown" 404 "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' $B/nope)"
 
 echo "== static index (expect 200 html) =="
-chk "200 index" 200 "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/index.html)"
+chk "200 index" 200 "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:/index.html)"
 
 echo "== path traversal (expect non-200) =="
-CODE=$(curl -s -o /dev/null -w '%{http_code}' --path-as-is "http://localhost:3000/../etc/passwd")
+CODE=$(curl -s -o /dev/null -w '%{http_code}' --path-as-is "http://localhost:/../etc/passwd")
 if [ "$CODE" != "200" ]; then PASS=$((PASS+1)); echo "ok   traversal blocked ($CODE)"; else FAIL=$((FAIL+1)); echo "FAIL traversal allowed"; fi
 
 echo "== export snapshot (expect 200 + attachment header + valid JSON) =="
@@ -189,7 +232,12 @@ IMP=$(curl -s -b $JAR -X POST $B/import -H 'Content-Type: application/json' -d @
 if [ "$IMP" = "0" ]; then PASS=$((PASS+1)); echo "ok   import restores snapshot"; else FAIL=$((FAIL+1)); echo "FAIL import restores snapshot"; fi
 chk "bootstrap works after import" 200 "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' $B/bootstrap)"
 
-echo "== RATE LIMIT: hammer login with bad passwords -> expect 429 + Retry-After =="
+echo "== RATE LIMIT: restart server WITH limiter, hammer login -> expect 429 + Retry-After =="
+# The main suite runs against a server started with TASKHIVE_RATE_LIMIT_BYPASS=1
+# so auth validation tests aren't throttled. Here we restart without the bypass
+# to exercise the real limiter, then restore the bypassed server afterwards.
+restart_server
+start_server /tmp/th_server_rl.log   # limiter ENABLED for this phase
 RL_HIT=""
 for i in $(seq 1 14); do
   C=$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/auth/login -d '{"email":"rl@test.dev","password":"nope-nope-nope"}')
@@ -198,6 +246,9 @@ done
 if [ -n "$RL_HIT" ]; then PASS=$((PASS+1)); echo "ok   login rate limited at attempt $RL_HIT (429)"; else FAIL=$((FAIL+1)); echo "FAIL no 429 from login rate limiter after 14 attempts"; fi
 RA_HDR=$(curl -s -D - -o /dev/null -X POST $B/auth/login -d '{"email":"rl@test.dev","password":"nope-nope-nope"}' | tr -d '\r' | grep -i '^retry-after:')
 if [ -n "$RA_HDR" ]; then PASS=$((PASS+1)); echo "ok   429 includes Retry-After ($RA_HDR)"; else FAIL=$((FAIL+1)); echo "FAIL 429 missing Retry-After header"; fi
+# Restore the bypassed server so the logout/persistence checks below can run
+restart_server
+start_server /tmp/th_server_final.log 1
 
 echo "== logout clears cookie =="
 chk "200 logout" 200 "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' -X POST $B/logout)"
