@@ -909,6 +909,9 @@ if (!sqlite) return send(res, 503, { error: 'database unavailable' });
       if (ctx) destroySession(ctx.token);
       return send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie('deleted', 0) });
     }
+
+    /* Nothing matched under /api/auth/* */
+    return send(res, 404, { error: 'unknown auth endpoint' });
 }
 
 async function handleApi(req, res, url) {
@@ -938,9 +941,6 @@ async function handleApi(req, res, url) {
 
   /* ================= AUTH API (/api/auth/*) ================= */
   if (seg === 'auth') return authHandler(req, res, ctx, routeKey, method);
-
-  /* Legacy aliases, 404, { error: 'unknown auth endpoint' });
-  }
 
   /* Legacy aliases kept for older clients: /api/login /api/logout /api/session.
    * NOTE: do NOT re-enter handleApi here — with the path normalization above,
