@@ -329,7 +329,7 @@ const wsStmt = {
   discInsert:    () => sqlite.prepare('INSERT INTO discussions (workspace_id,task,actor_key,text,at) VALUES (?,?,?,?,?)'),
   prefsGet:      () => sqlite.prepare('SELECT * FROM prefs WHERE workspace_id=? AND user_id=?'),
   counter:       () => sqlite.prepare('SELECT * FROM counters WHERE workspace_id=?'),
-  counterBump:   () => sqlite.prepare(`INSERT INTO counters (workspace_id,next_task_num,next_idx) VALUES (?,1,1)
+  counterBump:   () => sqlite.prepare(`INSERT INTO counters (workspace_id,next_task_num,next_idx) VALUES (?,?,?)
       ON CONFLICT(workspace_id) DO UPDATE SET
         next_task_num = MAX(next_task_num, excluded.next_task_num),
         next_idx      = MAX(next_idx, excluded.next_idx)`),

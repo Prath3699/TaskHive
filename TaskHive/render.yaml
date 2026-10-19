@@ -14,6 +14,12 @@ services:
         value: "22"
       - key: TASKHIVE_COOKIE_SECURE   # login cookie is HTTPS-only (Render always serves HTTPS)
         value: "1"
+      - key: TASKHIVE_TRUST_PROXY     # behind Render's HTTPS proxy — required for Secure cookies + correct client IP for rate limiting
+        value: "1"
+      - key: TASKHIVE_ALLOWED_ORIGINS  # CORS allowlist (comma-separated); same-origin app works without it, set if you add another frontend host
+        value: https://taskhive-4vsl.onrender.com
+      - key: TASKHIVE_DEMO_PASSWORD    # ⚠️ CHANGE THIS in the Render dashboard to a real secret (default is "password")
+        value: change-me-set-a-real-secret
       # PORT is injected automatically by Render; server.js reads process.env.PORT.
 
 # DATA PERSISTENCE
