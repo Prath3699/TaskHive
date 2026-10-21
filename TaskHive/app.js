@@ -29,7 +29,15 @@ const mePerson = () => ME ? PEOPLE.find(p => p.id === ME) : null;
 const meName  = () => (mePerson() || { name: 'Guest' }).name;
 const meInitials = () => (mePerson() || { initials: '??' }).initials;
 const meColor = () => (mePerson() || { color: '#888' }).color;
-const personById = (id) => PEOPLE.find(p => p.id === id) || PEOPLE[0] || { name: 'Unknown', initials: '?', color: '#888' };
+/* Fallback for assignees that resolve to no known person (unassigned tasks,
+   or a seeded/legacy task pointing at an id that isn't in this workspace).
+   NEVER return undefined — callers read .name/.initials[0]/.color directly. */
+const UNKNOWN_PERSON = { name: 'Unassigned', initials: '?', color: '#888' };
+const personById = (id) => {
+  if (id == null || id === '') return UNKNOWN_PERSON;
+  const byStr = PEOPLE.find(p => String(p.id) === String(id));
+  return byStr || UNKNOWN_PERSON;
+};
 
 // Task list exactly as in the design (15 tasks) — ids unique server-side;
 // the real data now comes from the backend via GET /api/bootstrap.
@@ -711,7 +719,7 @@ function propertiesPanelHtml(task) {
           ${Object.keys(PROGRESS).map(k => `<option ${k === task.progress ? 'selected' : ''}>${k}</option>`).join('')}
         </select></dd></div>
       <div class="prop-row"><dt>Category</dt><dd>${m.category}</dd></div>
-      <div class="prop-row"><dt>Task owner</dt><dd><button class="avatar avatar-xs link-avatar" style="--a:${owner.color}" data-person="${task.assignee}">${owner.initials[0]}</button>${owner.name.split(' ')[0]}</dd></div>
+      <div class="prop-row"><dt>Task owner</dt><dd><button class="avatar avatar-xs link-avatar" style="--a:${owner.color}" data-person="${task.assignee}">${(owner.initials || '?')[0]}</button>${esc((owner.name || 'Unassigned').split(' ')[0])}</dd></div>
       <div class="prop-row"><dt>Urgency</dt><dd><span class="pill ${URGENCY[task.urgency]}">${task.urgency}</span></dd></div>
       <div class="prop-row"><dt>Department</dt><dd>${m.department}</dd></div>
       <div class="prop-row"><dt>Date added</dt><dd>${m.added}</dd></div>
@@ -790,7 +798,7 @@ function kanbanColsHtml(tasks) {
               return `<div class="kb-card" draggable="true" data-idx="${t.idx}" tabindex="0">
                 <div class="kb-name">${esc(t.name)}</div>
                 <div class="kb-meta"><span class="tsk-id">${t.id}</span><span class="pill ${URGENCY[t.urgency]}">${t.urgency}</span>
-                  <span class="avatar avatar-xs" style="--a:${p.color}" title="${p.name}">${p.initials[0]}</span></div>
+                  <span class="avatar avatar-xs" style="--a:${p.color}" title="${esc(p.name)}">${(p.initials || '?')[0]}</span></div>
               </div>`;
             }).join('') || '<div class="kb-empty">Drop tasks here</div>'}
           </div>
