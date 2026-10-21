@@ -271,37 +271,80 @@ body {
 
 .side-footer { border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 2px; }
 
-/* ======================= BUTTONS ======================= */
+/* ======================= BUTTONS (shared system) =======================
+   One token-driven button language used app-wide: fixed 36px height,
+   10px radius, 14px/500 label, 6px icon+label gap, no wrapping.
+   Variants: -primary (filled accent), -secondary (surface + 1px border),
+   -ghost (transparent, hover tint), -danger. States: hover, :active,
+   :focus-visible ring, [disabled], [data-loading] (spinner).          */
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  border: none;
-  border-radius: 8px;
+  gap: 6px;
+  height: 36px;
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   font: inherit;
-  font-weight: 600;
+  font-weight: 500;
   font-size: 14px;
-  padding: 9px 16px;
+  line-height: 1;
+  padding: 0 12px;
+  white-space: nowrap;
   cursor: pointer;
-  transition: filter 0.15s, background 0.15s;
+  color: var(--text);
+  background: transparent;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease,
+              box-shadow .15s ease, filter .15s ease, transform .15s ease;
 }
 
-.btn svg { width: 16px; height: 16px; }
+.btn svg { width: 16px; height: 16px; flex-shrink: 0; }
 
-.btn-primary { background: var(--accent); color: var(--on-accent); }
+/* filled accent */
+.btn-primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
 .btn-primary:hover { filter: brightness(1.08); }
-.btn-primary:active { filter: brightness(.94); }
-.btn-primary:disabled { opacity: .55; cursor: not-allowed; filter: none; }
+.btn-primary:active { filter: brightness(.94); transform: translateY(1px); }
 
-.btn-ghost { background: transparent; color: var(--text-2); border: 1px solid var(--border); }
-.btn-ghost:hover { background: var(--hover-soft); color: var(--text); }
-.btn-ghost:disabled { opacity: .55; cursor: not-allowed; }
+/* surface + hairline border */
+.btn-secondary { background: var(--surface); color: var(--text-2); border-color: var(--border); }
+.btn-secondary:hover { background: var(--hover-soft); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); color: var(--text); }
+.btn-secondary:active { background: var(--hover); transform: translateY(1px); }
 
-/* danger button = ghost chrome with the theme's danger text */
+/* transparent with a hover tint */
+.btn-ghost { background: transparent; color: var(--text-2); border-color: transparent; }
+.btn-ghost:hover { background: var(--hover); color: var(--text); }
+.btn-ghost:active { background: var(--tab-active); transform: translateY(1px); }
+
+/* danger: tinted fill, AA danger text */
+.btn-danger { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 25%, transparent); }
+.btn-danger:hover { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+.btn-danger:active { transform: translateY(1px); }
+/* legacy `.danger` modifier keeps working on primary/ghost buttons */
 .btn.danger, .btn-ghost.danger { color: var(--danger); }
 .btn.danger:hover, .btn-ghost.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }
 
-.btn-sm { padding: 7px 14px; font-size: 13px; width: 100%; justify-content: center; }
+/* disabled everywhere */
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .55; cursor: not-allowed; filter: none; transform: none; }
+
+/* focus ring for every variant */
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+
+/* loading state: JS sets data-loading="" + disabled and swaps in .btn-spinner */
+.btn[data-loading] { pointer-events: none; }
+.btn-spinner {
+  width: 14px; height: 14px; flex-shrink: 0; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  animation: btn-spin .7s linear infinite;
+}
+@keyframes btn-spin { to { transform: rotate(360deg); } }
+
+/* square icon-only variant (always paired with aria-label) */
+.btn-icon { width: 36px; padding: 0; justify-content: center; gap: 0; }
+.btn-icon svg { width: 16px; height: 16px; }
+
+/* compact block button (trial card, login screens) — full width, slightly shorter */
+.btn-sm { font-size: 13px; width: 100%; justify-content: center; height: 34px; min-height: 34px; padding: 0 14px; }
 
 /* ======================= MAIN ======================= */
 .main {
@@ -334,13 +377,14 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  height: 36px;                     /* matches .btn / split button / toolbar controls */
   background: var(--input-bg);
   border: 1px solid transparent;
-  border-radius: 8px;
-  padding: 8px 12px;
+  border-radius: 10px;
+  padding: 0 12px;
 }
 
-.search:focus-within { border-color: var(--accent); background: var(--surface); }
+.search:focus-within { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px var(--ring); }
 .search svg { width: 16px; height: 16px; color: var(--text-3); flex-shrink: 0; }
 .search input { border: none; outline: none; background: transparent; font: inherit; width: 100%; min-width: 0; }
 
