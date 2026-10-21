@@ -108,6 +108,7 @@
   --toggle-off: #c3c8d4;
   --toggle-thumb-border: transparent;
   --login-accent: #43b3ff;       /* brand blue of the login/signup screen */
+  --login-fg: #ffffff;           /* logo/text color on the accent-filled login badge */
   --scroll-track: transparent;
   --scroll-thumb: rgba(20, 20, 40, .22);
   --scroll-thumb-hover: rgba(20, 20, 40, .38);
@@ -627,9 +628,9 @@ button.progress-cell.progress-btn:focus-visible {
   white-space: nowrap;
 }
 
-.pill-critical { background: var(--critical); color: #fff; }
-.pill-moderate { background: color-mix(in srgb, var(--moderate) 14%, var(--surface)); color: var(--moderate); }
-.pill-minor    { background: color-mix(in srgb, var(--minor) 15%, var(--surface)); color: var(--minor); }
+.pill-critical { background: var(--critical); color: var(--on-accent); }
+.pill-moderate { background: color-mix(in srgb, var(--moderate) 14%, var(--surface)); color: var(--moderate-pill-text, var(--moderate)); }
+.pill-minor    { background: color-mix(in srgb, var(--minor) 15%, var(--surface)); color: var(--minor-pill-text, var(--minor)); }
 
 /* urgency badge is also a click-to-cycle button — strip UA button chrome */
 button.pill.urgency-cell {
@@ -1051,7 +1052,7 @@ html.dark, html[data-theme="dark"] { --toggle-off: #565b70; --toggle-thumb-borde
   .st-hero-stats { margin-left: 0; width: 100%; justify-content: space-between; gap: 0; }
   .st-hero-top { gap: 12px; }
 }
-.btn.danger { color: #ff3232; }
+.btn.danger { color: var(--danger); }   /* token-driven (was hardcoded #ff3232) */
 
 .faq details { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
 .faq summary { cursor: pointer; font-weight: 600; font-size: 14px; }
@@ -1116,7 +1117,7 @@ html.dark, html[data-theme="dark"], :root[data-theme="dark"] {
   --unread-item: #232a44;
   --on-accent: #10131f;       /* dark text on the light indigo accent (AA contrast) */
   --toast-bg: var(--surface-3);
-  --overlay-bg: rgba(6,7,12,.68);
+  --overlay-bg: rgba(8, 8, 14, .65);
   --ring: rgba(124,140,255,.45);
   --shadow-card: none;
   /* elevation = 1px border first, shadow only a subtle hint */
@@ -1136,6 +1137,9 @@ html.dark, html[data-theme="dark"], :root[data-theme="dark"] {
   --ev-blue-text: #8fc7f5;     --ev-blue-bg: #1e3a52;
   --rm-good-text: #8ad79c;
   --rm-warn-text: #ff9d9d;
+  /* urgency pill text in dark mode (AA on the tinted backgrounds) */
+  --moderate-pill-text: #f6a877;
+  --minor-pill-text: #7fd894;
   --icon-btn-hover-bg: var(--accent-bg);
   --inbox-hover-border: #4a4068;
   --tint-purple-hover: #2c2c54;
@@ -1201,14 +1205,6 @@ html.dark, html[data-theme="dark"], :root[data-theme="dark"] {
 }
 ::-webkit-scrollbar-corner { background: var(--scroll-track); }
 
-/* AA contrast fixes for the light theme (text-on-surface tokens) */
-:root, html.light {
-  --critical: #d92626;        /* was #ff3232 — below 4.5:1 on white */
-  --moderate: #b85a24;        /* was #db672d */
-  --minor: #2f7a44;           /* was #beefc8 text on tinted bg */
-  --accent-text: #6d54e6;     /* AA accent for text/icons on light surfaces */
-}
-
 html.light, html[data-theme="light"] body,
 html.dark, html[data-theme="dark"] body { background: var(--bg); color: var(--text); }
 
@@ -1233,6 +1229,13 @@ textarea {
 option { border-color: transparent; }          /* options have no visible border */
 input::placeholder, textarea::placeholder { color: var(--field-placeholder); opacity: 1; }
 
+/* Native calendar picker indicator + checkbox/radio controls follow the theme
+   (they were previously UA-default dark in light mode). */
+input::-webkit-calendar-picker-indicator { filter: invert(0); opacity: .55; cursor: pointer; }
+html.dark input::-webkit-calendar-picker-indicator,
+html[data-theme="dark"] input::-webkit-calendar-picker-indicator { filter: invert(1); opacity: .7; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
+
 /* Clear accent focus ring on every form field (keyboard + pointer focus) */
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([hidden]):focus-visible,
 select:focus-visible,
@@ -1249,45 +1252,12 @@ textarea:focus-visible,
   appearance: none; -webkit-appearance: none;
   background: transparent; border: none; box-shadow: none; outline: none;
 }
-html.dark, html[data-theme="dark"] .toggle input[type=checkbox] {
-  appearance: none; -webkit-appearance: none;
-  background: transparent; border: none; box-shadow: none; outline: none;
-}
-html.dark, html[data-theme="dark"] .search:focus-within { background: var(--surface); }
 
-/* urgency pills tuned for dark */
-html.dark, html[data-theme="dark"] .pill-moderate { background: rgba(240,138,75,.18); color: #f6a877; }
-html.dark, html[data-theme="dark"] .pill-minor    { background: rgba(78,203,104,.16); color: #7fd894; }
-html.dark, html[data-theme="dark"] .pill-critical { background: var(--critical); color: #fff; }
+/* Urgency pills use theme tokens only (see the .pill-* rules above) — the
+   tinted backgrounds and text colors flip automatically with data-theme. */
 
-/* progress pills tuned for dark */
-html.dark, html[data-theme="dark"] .prog-ongoing   { background: rgba(74,158,255,.18);  color: #7db8ff; }
-html.dark, html[data-theme="dark"] .prog-review    { background: rgba(45,190,200,.16);  color: #6fd6dd; }
-html.dark, html[data-theme="dark"] .prog-completed { background: rgba(78,203,104,.16);  color: #7fd894; }
-html.dark, html[data-theme="dark"] .prog-pending   { background: rgba(240,190,60,.16);  color: #ecc35f; }
-html.dark, html[data-theme="dark"] .prog-hold      { background: rgba(255,255,255,.08); color: #b5b5b5; }
-html.dark, html[data-theme="dark"] .dot-ongoing    { background: #7db8ff; }
-html.dark, html[data-theme="dark"] .dot-review,
-html.dark, html[data-theme="dark"] .dot-in-review  { background: #6fd6dd; }
-html.dark, html[data-theme="dark"] .dot-completed  { background: #7fd894; }
-html.dark, html[data-theme="dark"] .dot-pending    { background: #ecc35f; }
-html.dark, html[data-theme="dark"] .dot-on-hold    { background: #b5b5b5; }
-
-/* calendar event chips */
-html.dark, html[data-theme="dark"] .ev-purple { background: #342c55; color: #c9bcff; }
-html.dark, html[data-theme="dark"] .ev-green  { background: #20402a; color: #8ad79c; }
-html.dark, html[data-theme="dark"] .ev-red    { background: #4a2429; color: #ff9d9d; }
-html.dark, html[data-theme="dark"] .ev-blue   { background: #1f3a55; color: #8fc7f5; }
-
-/* misc hardcoded spots */
-html.dark, html[data-theme="dark"] .icon-btn:hover { background: #2b2545; color: #b9a8ff; }
-html.dark, html[data-theme="dark"] .plan.featured { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-html.dark, html[data-theme="dark"] .inbox-item:hover { border-color: #4a4068; }
-html.dark, html[data-theme="dark"] .modal-overlay { background: rgba(8,8,14,.65); }
-html.dark, html[data-theme="dark"] kbd { color: var(--text-2); }
-html.dark, html[data-theme="dark"] .toast { background: #2f2f3f; color: var(--text); }
-html.dark, html[data-theme="dark"] .nav-item.active { box-shadow: none; background: var(--tab-active); }
-html.dark, html[data-theme="dark"] ::selection { background: rgba(149,126,255,.35); }
+/* Selection highlight follows the accent in both themes. */
+::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 
 .no-results { text-align: center; color: var(--text-3); padding: 24px !important; font-style: italic; }
 
