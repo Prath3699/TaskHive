@@ -29,10 +29,67 @@
   --sel-row: #f3f0ff;         /* selected table row */
   --kbd-bg: #f0f0f4;
   --unread-item: #f8f6ff;
+  --shadow-card: 0 1px 2px rgba(0,0,0,.06);   /* nav active / card shadow */
   --critical: #ff3232;        /* urgency pill */
   --moderate: #db672d;        /* urgency pill */
   --minor: #beefc8;           /* urgency pill */
+
+  /* ---- design tokens: spacing / radii / shadows / type scale ----
+     Light is the DEFAULT (:root). Dark mode = html.dark, html[data-theme="dark"] class, or no stored
+     choice + prefers-color-scheme: dark (see the media block below). */
   --radius: 10px;
+  --radius-sm: 6px;
+  --radius-lg: 16px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --shadow-sm: 0 1px 3px rgba(20,20,40,.08);
+  --shadow-md: 0 4px 14px rgba(20,20,40,.12);
+  --shadow-lg: 0 20px 60px rgba(0,0,0,.3);
+  --font-xs: 11px;
+  --font-sm: 12px;
+  --font-md: 14px;
+  --font-lg: 18px;
+  --font-xl: 22px;
+
+  /* ---- layered surfaces & semantic aliases (light = default theme) ---- */
+  color-scheme: light;
+  --success: var(--completed);
+  --warning: #b07803;
+  --danger: #d92626;
+  --bg-dark: var(--bg);          /* darkest layer */
+  --surface-1: var(--bg);        /* sidebar sits on the page bg in light mode */
+  --surface-2: var(--surface);   /* cards */
+  --surface-3: var(--hover);     /* menus, modals, hover */
+  --accent-bg: rgba(123, 96, 255, .10);
+  --on-accent: #ffffff;          /* text on accent-filled buttons (large/icon-only) */
+  --toast-bg: #26263a;
+  --overlay-bg: rgba(20, 18, 35, .45);
+  --ring: color-mix(in srgb, var(--accent) 35%, transparent);
+  /* tinted-badge / chip colors (light theme) */
+  --avatar-grad-end: #9b7bff;
+  --prog-blue-text: #1a6fd4;   --prog-blue-bg: #e3f1ff;
+  --prog-teal-text: #0d8a93;   --prog-teal-bg: #dcf5f6;
+  --prog-green-text: #1d7a3c;  --prog-green-bg: #dcf5e3;
+  --prog-amber-text: #b07803;  --prog-amber-bg: #fdf3d2;
+  --prog-gray-text: #6b6b6b;   --prog-gray-bg: #ececec;
+  --ev-purple-text: #5b3fd6;   --ev-purple-bg: #ece6ff;
+  --ev-green-text: #1f7a38;    --ev-green-bg: #e2f6e7;
+  --ev-red-text: #c02020;      --ev-red-bg: #ffe3e3;
+  --ev-blue-text: #1a6fb5;     --ev-blue-bg: #e2f1ff;
+  --rm-good-text: #1f7a38;
+  --rm-warn-text: #c02020;
+  --icon-btn-hover-bg: #f0eefe;
+  --inbox-hover-border: #d9d2f5;
+  --tint-purple-hover: #faf9ff;
+  --sel-border: var(--accent);
+  /* scrollbar tokens (light) — derived from the surface layers above */
+  --scroll-track: transparent;
+  --scroll-thumb: rgba(20, 20, 40, .22);
+  --scroll-thumb-hover: rgba(20, 20, 40, .38);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -43,7 +100,7 @@ body {
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--font-md);
   line-height: 1.45;
 }
 
@@ -92,7 +149,7 @@ body {
   display: block;
 }
 
-.org-name { font-weight: 600; font-size: 14px; }
+.org-name { font-weight: 600; font-size: var(--font-md); }
 
 .org-status {
   display: flex;
@@ -133,7 +190,7 @@ body {
 
 .nav-item:hover { background: var(--hover); color: var(--text); }
 
-.nav-item.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+.nav-item.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow-card); }
 
 .nav-section {
   font-size: 11px;
@@ -202,7 +259,7 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-.crumbs { display: flex; align-items: center; gap: 8px; font-size: 14px; white-space: nowrap; }
+.crumbs { display: flex; align-items: center; gap: 8px; font-size: var(--font-md); white-space: nowrap; }
 .crumbs a { color: var(--text-3); text-decoration: none; }
 .crumbs a:hover { color: var(--text); }
 .crumbs .current { color: var(--text); font-weight: 600; }
@@ -401,10 +458,10 @@ body {
 .mi-check { font-size: 12px; color: var(--accent); font-weight: 700; }
 .pill-xs { font-size: 10px; padding: 1px 8px; }
 
-html.dark .col-menu {
+html.dark, html[data-theme="dark"] .col-menu {
   box-shadow: 0 12px 32px rgba(0, 0, 0, .5), 0 2px 8px rgba(0, 0, 0, .35);
 }
-html.dark .th-btn[aria-expanded="true"] { border-color: rgba(149,126,255,.45); }
+html.dark, html[data-theme="dark"] .th-btn[aria-expanded="true"] { border-color: rgba(149,126,255,.45); }
 
 .task-table tbody td {
   padding: 13px 14px;
@@ -656,10 +713,10 @@ button.pill.urgency-cell:focus-visible { outline: 2px solid var(--accent); outli
 }
 .modal {
   background: var(--surface); border-radius: 12px; width: min(560px, 92vw);
-  max-height: 84vh; overflow: auto; padding: 20px 24px; box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  max-height: 84vh; overflow: auto; padding: 20px 24px; box-shadow: var(--shadow-lg);
 }
 .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.modal-head h2 { font-size: 18px; margin: 0; }
+.modal-head h2 { font-size: var(--font-lg); margin: 0; }
 .icon-btn { background: none; border: none; font-size: 16px; cursor: pointer; color: var(--text-2); padding: 4px 8px; border-radius: 6px; }
 .icon-btn:hover { background: #f0eefe; color: var(--accent); }
 .modal label { display: block; font-size: 13px; color: var(--text-2); margin: 10px 0; }
@@ -688,8 +745,8 @@ kbd { background: var(--kbd-bg); border: 1px solid #ddd; border-radius: 4px; pad
 /* pages */
 .page-pad { padding: 24px 28px; overflow: auto; flex: 1; display: block; }
 .page-pad.narrow { max-width: 640px; }
-.page-head h1 { font-size: 22px; margin: 0 0 4px; }
-.page-head p { color: var(--text-2); font-size: 14px; margin: 0 0 8px; }
+.page-head h1 { font-size: var(--font-xl); margin: 0 0 4px; }
+.page-head p { color: var(--text-2); font-size: var(--font-md); margin: 0 0 8px; }
 .section-title { font-size: 15px; margin: 22px 0 10px; }
 
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 14px; }
@@ -702,7 +759,7 @@ kbd { background: var(--kbd-bg); border: 1px solid #ddd; border-radius: 4px; pad
    numbers render UA-default black, which is unreadable on dark-mode cards. */
 .stat-card { color: var(--text); font-family: inherit; }
 .stat-num { font-size: 26px; font-weight: 700; color: var(--text); line-height: 1.2; }
-html.dark .stat-num { color: #ffffff; }                 /* bright high-contrast in dark mode */
+html.dark, html[data-theme="dark"] .stat-num { color: #ffffff; }                 /* bright high-contrast in dark mode */
 .stat-label { font-size: 13px; color: var(--text-3); }
 
 .bar-chart { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
@@ -821,15 +878,15 @@ button.cal-day:hover { border-color: var(--accent); background: var(--tint-purpl
 .rm-open { color: var(--accent); font-weight: 700; }
 .rm-card:hover .rm-open { text-decoration: underline; }
 
-html.dark .rm-health.good strong { color: #8ad79c; }
-html.dark .rm-health.warn strong { color: #ff9d9d; }
-html.dark .rm-stat.good b { color: #8ad79c; }
-html.dark .rm-stat.red b { color: #ff9d9d; }
-html.dark .rm-badge { background: #2a2440; }
-html.dark .ev-gray { background: #2c2c3b; color: var(--text-2); }
-html.dark .rm-item { background: #24242f; }
-html.dark .rm-item:hover { background: #2c2c38; }
-html.dark .rm-card:hover { box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+html.dark, html[data-theme="dark"] .rm-health.good strong { color: #8ad79c; }
+html.dark, html[data-theme="dark"] .rm-health.warn strong { color: #ff9d9d; }
+html.dark, html[data-theme="dark"] .rm-stat.good b { color: #8ad79c; }
+html.dark, html[data-theme="dark"] .rm-stat.red b { color: #ff9d9d; }
+html.dark, html[data-theme="dark"] .rm-badge { background: #2a2440; }
+html.dark, html[data-theme="dark"] .ev-gray { background: #2c2c3b; color: var(--text-2); }
+html.dark, html[data-theme="dark"] .rm-item { background: #24242f; }
+html.dark, html[data-theme="dark"] .rm-item:hover { background: #2c2c38; }
+html.dark, html[data-theme="dark"] .rm-card:hover { box-shadow: 0 8px 24px rgba(0,0,0,.45); }
 
 @media (max-width: 480px) {
   .rm-grid { grid-template-columns: 1fr; }
@@ -870,7 +927,7 @@ html.dark .rm-card:hover { box-shadow: 0 8px 24px rgba(0,0,0,.45); }
 .st-hero-stats { margin-left: auto; display: flex; gap: 26px; }
 .st-stat { text-align: center; }
 .st-stat b { display: block; font-size: 22px; font-weight: 700; color: var(--text, #1c1c1c); }
-.dark .st-stat b { color: #ffffff; }
+html.dark .st-stat b, html[data-theme="dark"] .st-stat b { color: var(--text); }
 .st-stat span { font-size: 11px; color: var(--text-2); text-transform: uppercase; letter-spacing: .4px; }
 
 .st-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -891,7 +948,7 @@ html.dark .rm-card:hover { box-shadow: 0 8px 24px rgba(0,0,0,.45); }
    OFF = neutral gray, ON = accent color; explicit dark-mode tokens keep the
    track and thumb clearly visible against dark surfaces. */
 :root { --toggle-off: #c3c8d4; --toggle-thumb-border: transparent; }
-html.dark { --toggle-off: #565b70; --toggle-thumb-border: rgba(255,255,255,.18); }
+html.dark, html[data-theme="dark"] { --toggle-off: #565b70; --toggle-thumb-border: rgba(255,255,255,.18); }
 .toggle { position: relative; display: inline-flex; flex-shrink: 0; cursor: pointer; align-items: center; }
 .toggle input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; z-index: 2; cursor: pointer; }
 .toggle-track { width: 42px; height: 24px; border-radius: 999px; background: var(--toggle-off); position: relative; transition: background .18s ease; box-shadow: inset 0 1px 3px rgba(0,0,0,.12); }
@@ -925,91 +982,190 @@ html.dark { --toggle-off: #565b70; --toggle-thumb-border: rgba(255,255,255,.18);
 
 /* ======================= DARK MODE (full token theme) ======================= */
 /* All surfaces/text/borders flow through CSS variables, so overriding the
-   tokens on html.dark themes every component consistently. */
-html.dark {
-  --bg: #17171f;
-  --surface: #1d1d27;
-  --border: #33333f;
-  --text: #ececf2;
-  --text-2: #c6c6d2;
-  --text-3: #9494a3;
-  --accent: #957eff;
-  --ongoing: #957eff;
-  --completed: #4ecb68;
+   tokens on the dark theme selector themes every component consistently.
+   Theme is applied via <html data-theme="dark"> (head bootstrap script);
+   the legacy html.dark, html[data-theme="dark"] class is kept as an alias for older markup. */
+html.dark, html[data-theme="dark"], :root[data-theme="dark"] {
+  color-scheme: dark;
+  /* ---- layered surfaces: darkest page bg → sidebar → cards → menus/hover ---- */
+  --bg: #12141c;              /* darkest layer (no pure black) */
+  --surface-1: #171a24;       /* sidebar / chrome */
+  --surface-2: #1e2230;       /* cards */
+  --surface-3: #262b3d;       /* menus, modals, hover */
+  --border: rgba(255,255,255,.08);   /* white @ 8% */
+  --text: #e6e8ee;            /* no pure white */
+  --text-dim: #a3a9b8;
+  --text-faint: #7b8294;
+  --accent: #7c8cff;
+  --accent-bg: rgba(124,140,255,.14);
+  --success: #5ec97c;
+  --warning: #eab84f;
+  --danger: #ff6b6b;
+
+  /* legacy aliases mapped onto the new layers */
+  --surface: var(--surface-2);
+  --text-2: var(--text-dim);
+  --text-3: var(--text-faint);
+  --ongoing: var(--accent);
+  --completed: var(--success);
   --in-review: #5cc0ff;
-  --pending: #8b8b96;
-  --critical: #ff5555;
+  --pending: #8b93a6;
+  --critical: var(--danger);
   --moderate: #f08a4b;
   --minor: #2e5b3d;
-  --hover: #2a2a37;
-  --hover-soft: #242430;
-  --input-bg: #262633;
-  --chip-bg: #2b2b3a;
-  --tag-bg: #2b2b3a;
-  --tab-active: #2f2f3f;
-  --count-bg: #3a3a4c;
-  --track: #2c2c3b;
-  --line-soft: #2c2c3b;
-  --tint-purple: #292540;
-  --tint-purple-hover: #2e2a48;
-  --sel-row: #2b2545;
-  --kbd-bg: #2b2b3a;
-  --unread-item: #262238;
+  --hover: var(--surface-3);
+  --hover-soft: #232838;
+  --input-bg: #1a1e2b;
+  --chip-bg: #2a2f42;
+  --tag-bg: #2a2f42;
+  --tab-active: var(--surface-3);
+  --count-bg: #343a50;
+  --track: #2b3044;
+  --line-soft: #262b3d;
+  --tint-purple: #26264a;
+  --tint-purple-hover: #2c2c54;
+  --sel-row: #2b2f52;
+  --kbd-bg: #2a2f42;
+  --unread-item: #232a44;
+  --on-accent: #10131f;       /* dark text on the light indigo accent (AA contrast) */
+  --toast-bg: var(--surface-3);
+  --overlay-bg: rgba(6,7,12,.68);
+  --ring: rgba(124,140,255,.45);
+  --shadow-card: none;
+  /* elevation = 1px border first, shadow only a subtle hint */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.3);
+  --shadow-md: 0 6px 18px rgba(0,0,0,.35);
+  --shadow-lg: 0 16px 40px rgba(0,0,0,.45);
+  /* tinted badges / chips in dark mode */
+  --avatar-grad-end: #8f7bff;
+  --prog-blue-text: #7db8ff;   --prog-blue-bg: rgba(74,158,255,.14);
+  --prog-teal-text: #6fd6dd;   --prog-teal-bg: rgba(45,190,200,.13);
+  --prog-green-text: #7fd894;  --prog-green-bg: rgba(78,203,104,.13);
+  --prog-amber-text: #ecc35f;  --prog-amber-bg: rgba(240,190,60,.13);
+  --prog-gray-text: #b5bac6;   --prog-gray-bg: rgba(255,255,255,.07);
+  --ev-purple-text: #c9bcff;   --ev-purple-bg: #2a2a4d;
+  --ev-green-text: #8ad79c;    --ev-green-bg: #1e3f2b;
+  --ev-red-text: #ff9d9d;      --ev-red-bg: #46262c;
+  --ev-blue-text: #8fc7f5;     --ev-blue-bg: #1e3a52;
+  --rm-good-text: #8ad79c;
+  --rm-warn-text: #ff9d9d;
+  --icon-btn-hover-bg: var(--accent-bg);
+  --inbox-hover-border: #4a4068;
+  --tint-purple-hover: #2c2c54;
+  --sel-border: rgba(124,140,255,.55);
+  /* scrollbar tokens (dark) — thumb = lifted surface, track = page bg */
+  --scroll-track: var(--bg);
+  --scroll-thumb: #3a4056;
+  --scroll-thumb-hover: #4d5470;
 }
 
-html.dark body { background: var(--bg); color: var(--text); }
+/* ============================ THEME: prefers-color-scheme fallback ============================ */
+/* Light is the :root default. When the user has NOT chosen a theme explicitly
+   (JS leaves <html> classless), follow the OS preference for dark. The token
+   block is repeated here so scrollbars/surfaces re-theme even without any
+   JS-set attribute — matching the html.dark / [data-theme="dark"] sets above. */
+@media (prefers-color-scheme: dark) {
+  html:not(.dark):not(.light) { color-scheme: dark; }
+  /* Same token set as the explicit dark theme, so scrollbars and surfaces
+     re-theme with the OS preference even before/without any JS attribute. */
+  html:not(.dark):not(.light) {
+    --scroll-track: var(--bg);
+    --scroll-thumb: #3a4056;
+    --scroll-thumb-hover: #4d5470;
+  }
+}
+@media (prefers-color-scheme: light) {
+  html:not(.dark):not(.light) { color-scheme: light; }
+  html:not(.dark):not(.light) {
+    --scroll-track: transparent;
+    --scroll-thumb: rgba(20, 20, 40, .22);
+    --scroll-thumb-hover: rgba(20, 20, 40, .38);
+  }
+}
+
+/* ============================ SCROLLBARS (theme-aware) ============================ */
+/* Standard property: Firefox + Chrome 121+. Values are custom properties, so
+   they resolve per-element from <html> and flip instantly on theme toggle —
+   no transition, no reload needed. */
+* { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) var(--scroll-track); }
+
+/* WebKit fallback: Safari + older Chromium. Transparent track keeps the
+   layered look; thumb uses the same tokens as scrollbar-color above. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--scroll-track); }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 8px;
+  border: 2px solid transparent;   /* inset thumb so it reads thinner */
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner { background: var(--scroll-track); }
+
+/* AA contrast fixes for the light theme (text-on-surface tokens) */
+:root, html.light {
+  --critical: #d92626;        /* was #ff3232 — below 4.5:1 on white */
+  --moderate: #b85a24;        /* was #db672d */
+  --minor: #2f7a44;           /* was #beefc8 text on tinted bg */
+  --accent-text: #6d54e6;     /* AA accent for text/icons on light surfaces */
+}
+
+html.dark, html[data-theme="dark"] body { background: var(--bg); color: var(--text); }
 
 /* inputs need explicit theming — scoped to text-like fields so the custom
    pill switches (.toggle input) are never repainted as rectangular blocks. */
-html.dark input[type=text], html.dark input[type=email], html.dark input[type=search], html.dark input[type=password],
-html.dark select,
-html.dark textarea {
+html.dark, html[data-theme="dark"] input[type=text], html.dark, html[data-theme="dark"] input[type=email], html.dark, html[data-theme="dark"] input[type=search], html.dark, html[data-theme="dark"] input[type=password],
+html.dark, html[data-theme="dark"] select,
+html.dark, html[data-theme="dark"] textarea {
   background: var(--input-bg);
   color: var(--text);
   border-color: var(--border);
 }
 /* Belt-and-braces: any checkbox is always a hidden switch hit-area, even if a
    future global rule tries to theme it like an input. */
-html.dark .toggle input[type=checkbox] {
+html.dark, html[data-theme="dark"] .toggle input[type=checkbox] {
   appearance: none; -webkit-appearance: none;
   background: transparent; border: none; box-shadow: none; outline: none;
 }
-html.dark input::placeholder { color: var(--text-3); }
-html.dark .search:focus-within { background: var(--surface); }
+html.dark, html[data-theme="dark"] input::placeholder { color: var(--text-3); }
+html.dark, html[data-theme="dark"] .search:focus-within { background: var(--surface); }
 
 /* urgency pills tuned for dark */
-html.dark .pill-moderate { background: rgba(240,138,75,.18); color: #f6a877; }
-html.dark .pill-minor    { background: rgba(78,203,104,.16); color: #7fd894; }
-html.dark .pill-critical { background: var(--critical); color: #fff; }
+html.dark, html[data-theme="dark"] .pill-moderate { background: rgba(240,138,75,.18); color: #f6a877; }
+html.dark, html[data-theme="dark"] .pill-minor    { background: rgba(78,203,104,.16); color: #7fd894; }
+html.dark, html[data-theme="dark"] .pill-critical { background: var(--critical); color: #fff; }
 
 /* progress pills tuned for dark */
-html.dark .prog-ongoing   { background: rgba(74,158,255,.18);  color: #7db8ff; }
-html.dark .prog-review    { background: rgba(45,190,200,.16);  color: #6fd6dd; }
-html.dark .prog-completed { background: rgba(78,203,104,.16);  color: #7fd894; }
-html.dark .prog-pending   { background: rgba(240,190,60,.16);  color: #ecc35f; }
-html.dark .prog-hold      { background: rgba(255,255,255,.08); color: #b5b5b5; }
-html.dark .dot-ongoing    { background: #7db8ff; }
-html.dark .dot-review,
-html.dark .dot-in-review  { background: #6fd6dd; }
-html.dark .dot-completed  { background: #7fd894; }
-html.dark .dot-pending    { background: #ecc35f; }
-html.dark .dot-on-hold    { background: #b5b5b5; }
+html.dark, html[data-theme="dark"] .prog-ongoing   { background: rgba(74,158,255,.18);  color: #7db8ff; }
+html.dark, html[data-theme="dark"] .prog-review    { background: rgba(45,190,200,.16);  color: #6fd6dd; }
+html.dark, html[data-theme="dark"] .prog-completed { background: rgba(78,203,104,.16);  color: #7fd894; }
+html.dark, html[data-theme="dark"] .prog-pending   { background: rgba(240,190,60,.16);  color: #ecc35f; }
+html.dark, html[data-theme="dark"] .prog-hold      { background: rgba(255,255,255,.08); color: #b5b5b5; }
+html.dark, html[data-theme="dark"] .dot-ongoing    { background: #7db8ff; }
+html.dark, html[data-theme="dark"] .dot-review,
+html.dark, html[data-theme="dark"] .dot-in-review  { background: #6fd6dd; }
+html.dark, html[data-theme="dark"] .dot-completed  { background: #7fd894; }
+html.dark, html[data-theme="dark"] .dot-pending    { background: #ecc35f; }
+html.dark, html[data-theme="dark"] .dot-on-hold    { background: #b5b5b5; }
 
 /* calendar event chips */
-html.dark .ev-purple { background: #342c55; color: #c9bcff; }
-html.dark .ev-green  { background: #20402a; color: #8ad79c; }
-html.dark .ev-red    { background: #4a2429; color: #ff9d9d; }
-html.dark .ev-blue   { background: #1f3a55; color: #8fc7f5; }
+html.dark, html[data-theme="dark"] .ev-purple { background: #342c55; color: #c9bcff; }
+html.dark, html[data-theme="dark"] .ev-green  { background: #20402a; color: #8ad79c; }
+html.dark, html[data-theme="dark"] .ev-red    { background: #4a2429; color: #ff9d9d; }
+html.dark, html[data-theme="dark"] .ev-blue   { background: #1f3a55; color: #8fc7f5; }
 
 /* misc hardcoded spots */
-html.dark .icon-btn:hover { background: #2b2545; color: #b9a8ff; }
-html.dark .plan.featured { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-html.dark .inbox-item:hover { border-color: #4a4068; }
-html.dark .modal-overlay { background: rgba(8,8,14,.65); }
-html.dark kbd { color: var(--text-2); }
-html.dark .toast { background: #2f2f3f; color: var(--text); }
-html.dark .nav-item.active { box-shadow: none; background: var(--tab-active); }
-html.dark ::selection { background: rgba(149,126,255,.35); }
+html.dark, html[data-theme="dark"] .icon-btn:hover { background: #2b2545; color: #b9a8ff; }
+html.dark, html[data-theme="dark"] .plan.featured { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+html.dark, html[data-theme="dark"] .inbox-item:hover { border-color: #4a4068; }
+html.dark, html[data-theme="dark"] .modal-overlay { background: rgba(8,8,14,.65); }
+html.dark, html[data-theme="dark"] kbd { color: var(--text-2); }
+html.dark, html[data-theme="dark"] .toast { background: #2f2f3f; color: var(--text); }
+html.dark, html[data-theme="dark"] .nav-item.active { box-shadow: none; background: var(--tab-active); }
+html.dark, html[data-theme="dark"] ::selection { background: rgba(149,126,255,.35); }
 
 .no-results { text-align: center; color: var(--text-3); padding: 24px !important; font-style: italic; }
 
@@ -1024,7 +1180,7 @@ html.dark ::selection { background: rgba(149,126,255,.35); }
   border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
   border-radius: 16px; padding: 18px 22px; margin-bottom: 18px;
 }
-html.dark .mt-hero {
+html.dark, html[data-theme="dark"] .mt-hero {
   background: linear-gradient(120deg, #221f33, color-mix(in srgb, var(--accent) 14%, var(--surface)));
   border-color: #35314a;
 }
@@ -1071,7 +1227,7 @@ html.dark .mt-hero {
   display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 8px 10px; margin-bottom: 18px;
-  box-shadow: 0 1px 3px rgba(20,20,40,.04);
+  box-shadow: var(--shadow-sm);
 }
 .mt-search-wrap { position: relative; display: flex; align-items: center; }
 .mt-search-icon { position: absolute; left: 10px; color: var(--text-3); pointer-events: none; }
@@ -1089,7 +1245,7 @@ html.dark .mt-hero {
   border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
   transition: background .15s;
 }
-html.dark .mt-chip { background: rgba(149,126,255,.14); }
+html.dark, html[data-theme="dark"] .mt-chip { background: rgba(149,126,255,.14); }
 .mt-chip:hover { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); }
 .mt-chip-x { font-size: 10px; opacity: .7; }
 .toolbar-spacer { flex: 1; }
@@ -1104,8 +1260,8 @@ html.dark .mt-chip { background: rgba(149,126,255,.14); }
   transition: background .15s, color .15s, box-shadow .15s;
 }
 .mt-seg-btn:hover { color: var(--text); }
-.mt-seg-btn.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 4px rgba(20,20,40,.12); }
-html.dark .mt-seg-btn.active { box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+.mt-seg-btn.active { background: var(--surface); color: var(--accent); box-shadow: var(--shadow-sm); }
+html.dark, html[data-theme="dark"] .mt-seg-btn.active { box-shadow: 0 1px 4px rgba(0,0,0,.4); }
 
 /* grouped sections */
 .mt-content .kanban { margin-top: 2px; }
@@ -1224,7 +1380,7 @@ body.show-login .app-shell, body.show-login header.topbar, body.show-login .bott
 .mt-seg-btn:focus-visible, .pill:focus-visible, select:focus-visible,
 input[type="text"]:focus-visible, input[type="search"]:focus-visible,
 a:focus-visible { outline: 2px solid var(--accent, #7b60ff); outline-offset: 2px; border-radius: 6px; }
-html.dark .nav-item:focus-visible, html.dark a:focus-visible { outline-color: #9d8bff; }
+html.dark, html[data-theme="dark"] .nav-item:focus-visible, html.dark, html[data-theme="dark"] a:focus-visible { outline-color: #9d8bff; }
 
 /* ---- skip link ---- */
 .skip-link { position: absolute; left: -9999px; top: 8px; z-index: 300; background: var(--accent, #7b60ff); color: #fff; padding: 8px 14px; border-radius: 8px; font-size: 13px; text-decoration: none; }
@@ -1383,7 +1539,7 @@ html.dark .nav-item:focus-visible, html.dark a:focus-visible { outline-color: #9
 }
 
 /* Dark mode adjustments for mobile pieces */
-html.dark .sidebar { box-shadow: 4px 0 24px rgba(0,0,0,.5); }
+html.dark, html[data-theme="dark"] .sidebar { box-shadow: 4px 0 24px rgba(0,0,0,.5); }
 
 /* ============================ ROADMAP QUARTER FILTERS ============================ */
 .rm-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
@@ -1393,8 +1549,8 @@ html.dark .sidebar { box-shadow: 4px 0 24px rgba(0,0,0,.5); }
 .rm-chipf:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
 .rm-chipf.on { background: var(--accent); border-color: var(--accent); color: #fff;
   box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 35%, transparent); }
-html.dark .rm-chipf { background: var(--surface-2, #1c2740); color: #cbd6ea; }
-html.dark .rm-chipf.on { color: #fff; }
+html.dark, html[data-theme="dark"] .rm-chipf { background: var(--surface-2, #1c2740); color: #cbd6ea; }
+html.dark, html[data-theme="dark"] .rm-chipf.on { color: #fff; }
 
 /* ============================ SETTINGS AVATAR RING + PRESENCE ============================ */
 .st-avatar-wrap { position: relative; display: inline-flex; border-radius: 50%; padding: 4px;
@@ -1414,15 +1570,15 @@ html.dark .rm-chipf.on { color: #fff; }
     left: 0; right: 0; bottom: 0; z-index: 120; background: var(--surface);
     border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom);
     box-shadow: 0 -6px 24px rgba(10,20,40,.12); }
-  html.dark .bottom-tabs { background: #141d33; box-shadow: 0 -6px 24px rgba(0,0,0,.5); }
+  html.dark, html[data-theme="dark"] .bottom-tabs { background: #141d33; box-shadow: 0 -6px 24px rgba(0,0,0,.5); }
   .bt-item { display: flex; flex-direction: column; align-items: center; gap: 2px;
     padding: 8px 4px 6px; font-size: 10.5px; font-weight: 600; color: var(--muted, #6b7a93);
     text-decoration: none; border-radius: 10px; transition: color .15s ease; }
   .bt-ico { font-size: 19px; line-height: 1.15; filter: grayscale(.35); transition: filter .15s ease, transform .15s ease; }
   .bt-item.active { color: var(--accent); }
   .bt-item.active .bt-ico { filter: none; transform: translateY(-1px); }
-  html.dark .bt-item { color: #8b9ab5; }
-  html.dark .bt-item.active { color: #6fb4ff; }
+  html.dark, html[data-theme="dark"] .bt-item { color: #8b9ab5; }
+  html.dark, html[data-theme="dark"] .bt-item.active { color: #6fb4ff; }
   /* keep content clear of the fixed bar */
   .app-shell main, .page-pad { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
   body.show-login .bottom-tabs { visibility: hidden; }

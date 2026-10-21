@@ -86,6 +86,10 @@
   --inbox-hover-border: #d9d2f5;
   --tint-purple-hover: #faf9ff;
   --sel-border: var(--accent);
+  /* scrollbar tokens (light) — derived from the surface layers above */
+  --scroll-track: transparent;
+  --scroll-thumb: rgba(20, 20, 40, .22);
+  --scroll-thumb-hover: rgba(20, 20, 40, .38);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1049,17 +1053,57 @@ html.dark, html[data-theme="dark"], :root[data-theme="dark"] {
   --inbox-hover-border: #4a4068;
   --tint-purple-hover: #2c2c54;
   --sel-border: rgba(124,140,255,.55);
+  /* scrollbar tokens (dark) — thumb = lifted surface, track = page bg */
+  --scroll-track: var(--bg);
+  --scroll-thumb: #3a4056;
+  --scroll-thumb-hover: #4d5470;
 }
 
 /* ============================ THEME: prefers-color-scheme fallback ============================ */
 /* Light is the :root default. When the user has NOT chosen a theme explicitly
-   (JS leaves <html> classless), follow the OS preference for dark. */
+   (JS leaves <html> classless), follow the OS preference for dark. The token
+   block is repeated here so scrollbars/surfaces re-theme even without any
+   JS-set attribute — matching the html.dark / [data-theme="dark"] sets above. */
 @media (prefers-color-scheme: dark) {
   html:not(.dark):not(.light) { color-scheme: dark; }
+  /* Same token set as the explicit dark theme, so scrollbars and surfaces
+     re-theme with the OS preference even before/without any JS attribute. */
+  html:not(.dark):not(.light) {
+    --scroll-track: var(--bg);
+    --scroll-thumb: #3a4056;
+    --scroll-thumb-hover: #4d5470;
+  }
 }
 @media (prefers-color-scheme: light) {
   html:not(.dark):not(.light) { color-scheme: light; }
+  html:not(.dark):not(.light) {
+    --scroll-track: transparent;
+    --scroll-thumb: rgba(20, 20, 40, .22);
+    --scroll-thumb-hover: rgba(20, 20, 40, .38);
+  }
 }
+
+/* ============================ SCROLLBARS (theme-aware) ============================ */
+/* Standard property: Firefox + Chrome 121+. Values are custom properties, so
+   they resolve per-element from <html> and flip instantly on theme toggle —
+   no transition, no reload needed. */
+* { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) var(--scroll-track); }
+
+/* WebKit fallback: Safari + older Chromium. Transparent track keeps the
+   layered look; thumb uses the same tokens as scrollbar-color above. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--scroll-track); }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 8px;
+  border: 2px solid transparent;   /* inset thumb so it reads thinner */
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner { background: var(--scroll-track); }
 
 /* AA contrast fixes for the light theme (text-on-surface tokens) */
 :root, html.light {
