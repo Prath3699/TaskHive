@@ -3,7 +3,17 @@
    Extracted from design PDF (colors sampled from artwork)
    ========================================================= */
 
+/* =========================================================
+   THEME TOKENS — SINGLE SOURCE OF TRUTH
+   :root carries the full LIGHT set (fallback if no data-theme
+   attribute is present yet). The head bootstrap script always
+   sets <html data-theme="light|dark"> before first paint, so
+   :root[data-theme="light"] / :root[data-theme="dark"] below
+   are the authoritative theme blocks. The legacy html.dark
+   class is kept as an alias for older markup.
+   ========================================================= */
 :root {
+  color-scheme: light;
   --bg: #f5f5f5;
   --surface: #ffffff;
   --border: #e6e6e6;
@@ -11,6 +21,7 @@
   --text-2: #5a5a5a;
   --text-3: #7c7c7c;
   --accent: #7b60ff;          /* purple primary */
+  --accent-text: #6d54e6;     /* AA accent for text/icons on light surfaces */
   --ongoing: #7b60ff;         /* progress dot: Ongoing */
   --completed: #3eb957;       /* progress dot: Completed */
   --in-review: #43b3ff;       /* progress dot: In review */
@@ -34,15 +45,17 @@
   --tint-purple-hover: #faf9ff;
   --sel-row: #f3f0ff;         /* selected table row */
   --kbd-bg: #f0f0f4;
+  --kbd-border: var(--border);
   --unread-item: #f8f6ff;
   --shadow-card: 0 1px 2px rgba(0,0,0,.06);   /* nav active / card shadow */
-  --critical: #ff3232;        /* urgency pill */
-  --moderate: #db672d;        /* urgency pill */
-  --minor: #beefc8;           /* urgency pill */
+  --critical: #d92626;        /* urgency pill (AA on white) */
+  --moderate: #b85a24;        /* urgency pill (AA on white) */
+  --minor: #2f7a44;           /* urgency pill text on tinted bg */
+  --danger-solid: #d92626;    /* solid danger fills (delete buttons) */
+  --on-accent: #ffffff;       /* text on accent-filled buttons */
+  --muted: #6b7280;           /* generic secondary text */
 
-  /* ---- design tokens: spacing / radii / shadows / type scale ----
-     Light is the DEFAULT (:root). Dark mode = html.dark, html[data-theme="dark"] class, or no stored
-     choice + prefers-color-scheme: dark (see the media block below). */
+  /* ---- design tokens: spacing / radii / shadows / type scale ---- */
   --radius: 10px;
   --radius-sm: 6px;
   --radius-lg: 16px;
@@ -62,7 +75,6 @@
   --font-xl: 22px;
 
   /* ---- layered surfaces & semantic aliases (light = default theme) ---- */
-  color-scheme: light;
   --success: var(--completed);
   --warning: #b07803;
   --danger: #d92626;
@@ -70,10 +82,11 @@
   --surface-1: var(--bg);        /* sidebar sits on the page bg in light mode */
   --surface-2: var(--surface);   /* cards */
   --surface-3: var(--hover);     /* menus, modals, hover */
+  --accent-hover: color-mix(in srgb, var(--accent) 85%, #000);
   --accent-bg: rgba(123, 96, 255, .10);
-  --on-accent: #ffffff;          /* text on accent-filled buttons (large/icon-only) */
   --toast-bg: #26263a;
   --overlay-bg: rgba(20, 18, 35, .45);
+  --shadow: var(--shadow-md);
   --ring: color-mix(in srgb, var(--accent) 35%, transparent);
   /* tinted-badge / chip colors (light theme) */
   --avatar-grad-end: #9b7bff;
@@ -90,15 +103,25 @@
   --rm-warn-text: #c02020;
   --icon-btn-hover-bg: #f0eefe;
   --inbox-hover-border: #d9d2f5;
-  --tint-purple-hover: #faf9ff;
   --sel-border: var(--accent);
-  /* scrollbar tokens (light) — derived from the surface layers above */
+  --empty-border: #d9d9de;
+  --toggle-off: #c3c8d4;
+  --toggle-thumb-border: transparent;
+  --login-accent: #43b3ff;       /* brand blue of the login/signup screen */
   --scroll-track: transparent;
   --scroll-thumb: rgba(20, 20, 40, .22);
   --scroll-thumb-hover: rgba(20, 20, 40, .38);
 }
 
+/* Explicit LIGHT theme block — authoritative when the bootstrap script has
+   set data-theme="light" (also used to override stale html.dark class). */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
+
+[hidden] { display: none !important; }   /* hidden controls must never pick up field styling */
 
 html, body { height: 100%; }
 
@@ -239,11 +262,18 @@ body {
 
 .btn svg { width: 16px; height: 16px; }
 
-.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary { background: var(--accent); color: var(--on-accent); }
 .btn-primary:hover { filter: brightness(1.08); }
+.btn-primary:active { filter: brightness(.94); }
+.btn-primary:disabled { opacity: .55; cursor: not-allowed; filter: none; }
 
 .btn-ghost { background: transparent; color: var(--text-2); border: 1px solid var(--border); }
 .btn-ghost:hover { background: var(--hover-soft); color: var(--text); }
+.btn-ghost:disabled { opacity: .55; cursor: not-allowed; }
+
+/* danger button = ghost chrome with the theme's danger text */
+.btn.danger, .btn-ghost.danger { color: var(--danger); }
+.btn.danger:hover, .btn-ghost.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }
 
 .btn-sm { padding: 7px 14px; font-size: 13px; width: 100%; justify-content: center; }
 
@@ -290,10 +320,9 @@ body {
 
 /* ---- keyboard hint badges inside the search box ---- */
 .search .kbd-hint { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0;
-  font-size: 10.5px; line-height: 1; padding: 3px 6px; border-radius: 5px;
-  background: var(--kbd-bg); border: 1px solid var(--border); color: var(--text-3); }
-.search .kbd-slash { padding: 3px 7px; }
-@media (pointer: coarse) { .search .kbd-hint { display: none; } }  /* hide Ctrl-K hint on touch devices */
+  font-size: var(--font-xs); line-height: 1; padding: var(--sp-1) var(--sp-2); border-radius: var(--radius-sm);
+  background: var(--kbd-bg); border: 1px solid var(--kbd-border); color: var(--text-3); }
+@media (pointer: coarse) { .search .kbd-slash { display: none; } }  /* "/" is rare on phone keyboards — hide that half of the hint */
 
 /* ---- search results dropdown ---- */
 .search { position: relative; }
@@ -565,18 +594,18 @@ button.progress-cell.progress-btn:focus-visible {
 }
 .pill-prog .status-dot { width: 7px; height: 7px; }
 
-.prog-ongoing  { background: #e3f1ff; color: #1a6fd4; }   /* light blue  / blue  */
-.prog-review   { background: #dcf5f6; color: #0d8a93; }   /* light cyan  / teal  */
-.prog-completed{ background: #dcf5e3; color: #1d7a3c; }   /* light green / green */
-.prog-pending  { background: #fdf3d2; color: #b07803; }   /* light yellow/ amber */
-.prog-hold     { background: #ececec; color: #6b6b6b; }   /* light gray  / gray  */
+.prog-ongoing  { background: var(--prog-blue-bg);   color: var(--prog-blue-text); }
+.prog-review   { background: var(--prog-teal-bg);   color: var(--prog-teal-text); }
+.prog-completed{ background: var(--prog-green-bg);  color: var(--prog-green-text); }
+.prog-pending  { background: var(--prog-amber-bg);  color: var(--prog-amber-text); }
+.prog-hold     { background: var(--prog-gray-bg);   color: var(--prog-gray-text); }
 
-.dot-ongoing    { background: #1a6fd4; }
+.dot-ongoing    { background: var(--prog-blue-text); }
 .dot-in-review,
-.dot-review     { background: #0d8a93; }
-.dot-completed  { background: #1d7a3c; }
-.dot-pending    { background: #b07803; }
-.dot-on-hold    { background: #6b6b6b; }
+.dot-review     { background: var(--prog-teal-text); }
+.dot-completed  { background: var(--prog-green-text); }
+.dot-pending    { background: var(--prog-amber-text); }
+.dot-on-hold    { background: var(--prog-gray-text); }
 
 .status-dot {
   width: 9px;
@@ -599,8 +628,8 @@ button.progress-cell.progress-btn:focus-visible {
 }
 
 .pill-critical { background: var(--critical); color: #fff; }
-.pill-moderate { background: #ffe3d1; color: var(--moderate); }
-.pill-minor    { background: var(--minor); color: #1d7a3c; }
+.pill-moderate { background: color-mix(in srgb, var(--moderate) 14%, var(--surface)); color: var(--moderate); }
+.pill-minor    { background: color-mix(in srgb, var(--minor) 15%, var(--surface)); color: var(--minor); }
 
 /* urgency badge is also a click-to-cycle button — strip UA button chrome */
 button.pill.urgency-cell {
