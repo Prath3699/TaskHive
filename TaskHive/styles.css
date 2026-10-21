@@ -17,7 +17,13 @@
   --pending: #acacac;         /* progress dot: Pending */
   --hover: #ececec;           /* nav/tab hover */
   --hover-soft: #fafafa;      /* row hover */
-  --input-bg: #f0f0f0;        /* search field bg */
+  --input-bg: var(--field-bg); /* search field bg — follows the form-field tokens */
+  /* ---- form-field tokens (light theme): every input / select / textarea /
+     date picker / option paints with these so fields match the modal surface ---- */
+  --field-bg: #fff;
+  --field-border: #d5d9e3;
+  --field-text: #1b1f2a;
+  --field-placeholder: #7c828f;
   --chip-bg: #f0f0f0;         /* task-id chip */
   --tag-bg: #ebebeb;          /* tag pill */
   --tab-active: #ececec;
@@ -768,8 +774,9 @@ button.pill.urgency-cell:focus-visible { outline: 2px solid var(--accent); outli
 .modal label { display: block; font-size: 13px; color: var(--text-2); margin: 10px 0; }
 .modal input[type=text], .modal input[type=email], .modal select, .modal textarea,
 .settings-group input[type=text], .settings-group input[type=email] {
-  width: 100%; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  width: 100%; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--field-border); border-radius: 8px;
   font: inherit; box-sizing: border-box;
+  background-color: var(--field-bg); color: var(--field-text);   /* theme-aware (was UA default) */
 }
 .modal-lead { color: var(--text-2); font-size: 14px; }
 .plan-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
@@ -1061,7 +1068,12 @@ html.dark, html[data-theme="dark"], :root[data-theme="dark"] {
   --minor: #2e5b3d;
   --hover: var(--surface-3);
   --hover-soft: #232838;
-  --input-bg: #1a1e2b;
+  --input-bg: var(--field-bg);
+  /* form-field tokens (dark theme) */
+  --field-bg: #151821;
+  --field-border: rgba(255,255,255,0.12);
+  --field-text: #e6e8ee;
+  --field-placeholder: #8b93a6;
   --chip-bg: #2a2f42;
   --tag-bg: #2a2f42;
   --tab-active: var(--surface-3);
@@ -1105,27 +1117,36 @@ html.dark, html[data-theme="dark"], :root[data-theme="dark"] {
   --scroll-thumb-hover: #4d5470;
 }
 
-/* ============================ THEME: prefers-color-scheme fallback ============================ */
+/* ============================ THEME: prefers-color-scheme fallback ("System" mode) ============================ */
 /* Light is the :root default. When the user has NOT chosen a theme explicitly
-   (JS leaves <html> classless), follow the OS preference for dark. The token
-   block is repeated here so scrollbars/surfaces re-theme even without any
-   JS-set attribute — matching the html.dark / [data-theme="dark"] sets above. */
+   (no .dark / .light class and no data-theme attribute — i.e. "System"), the
+   head bootstrap script in index.html sets data-theme="dark|light" on <html>
+   from matchMedia, so color-scheme, field tokens and scrollbars all follow
+   the resolved theme. The media blocks below are the no-JS safety net. */
 @media (prefers-color-scheme: dark) {
-  html:not(.dark):not(.light) { color-scheme: dark; }
-  /* Same token set as the explicit dark theme, so scrollbars and surfaces
-     re-theme with the OS preference even before/without any JS attribute. */
-  html:not(.dark):not(.light) {
+  html:not(.dark):not(.light):not([data-theme]) { color-scheme: dark; }
+  /* Same token set as the explicit dark theme, so scrollbars, fields and
+     surfaces re-theme with the OS preference even before/without any JS attribute. */
+  html:not(.dark):not(.light):not([data-theme]) {
     --scroll-track: var(--bg);
     --scroll-thumb: #3a4056;
     --scroll-thumb-hover: #4d5470;
+    --field-bg: #151821;
+    --field-border: rgba(255,255,255,0.12);
+    --field-text: #e6e8ee;
+    --field-placeholder: #8b93a6;
   }
 }
 @media (prefers-color-scheme: light) {
-  html:not(.dark):not(.light) { color-scheme: light; }
-  html:not(.dark):not(.light) {
+  html:not(.dark):not(.light):not([data-theme]) { color-scheme: light; }
+  html:not(.dark):not(.light):not([data-theme]) {
     --scroll-track: transparent;
     --scroll-thumb: rgba(20, 20, 40, .22);
     --scroll-thumb-hover: rgba(20, 20, 40, .38);
+    --field-bg: #fff;
+    --field-border: #d5d9e3;
+    --field-text: #1b1f2a;
+    --field-placeholder: #7c828f;
   }
 }
 
@@ -1159,24 +1180,50 @@ html.dark, html[data-theme="dark"], :root[data-theme="dark"] {
   --accent-text: #6d54e6;     /* AA accent for text/icons on light surfaces */
 }
 
+html.light, html[data-theme="light"] body,
 html.dark, html[data-theme="dark"] body { background: var(--bg); color: var(--text); }
 
-/* inputs need explicit theming — scoped to text-like fields so the custom
-   pill switches (.toggle input) are never repainted as rectangular blocks. */
-html.dark, html[data-theme="dark"] input[type=text], html.dark, html[data-theme="dark"] input[type=email], html.dark, html[data-theme="dark"] input[type=search], html.dark, html[data-theme="dark"] input[type=password],
-html.dark, html[data-theme="dark"] select,
-html.dark, html[data-theme="dark"] textarea {
-  background: var(--input-bg);
-  color: var(--text);
-  border-color: var(--border);
+/* ============================ FORM FIELDS (theme-aware) ============================ */
+/* Single source of truth for every text-like control: background, border,
+   text and placeholder all come from the --field-* tokens defined per theme
+   (:root = light, [data-theme="dark"]/.dark = dark, media block = System).
+   color-scheme is set on :root / the dark selector above, so native widgets
+   (select popups, date pickers, scrollbars inside controls) flip with it. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([hidden]),
+select,
+textarea,
+option {
+  background-color: var(--field-bg);
+  color: var(--field-text);
 }
-/* Belt-and-braces: any checkbox is always a hidden switch hit-area, even if a
-   future global rule tries to theme it like an input. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([hidden]),
+select,
+textarea {
+  border-color: var(--field-border);
+}
+option { border-color: transparent; }          /* options have no visible border */
+input::placeholder, textarea::placeholder { color: var(--field-placeholder); opacity: 1; }
+
+/* Clear accent focus ring on every form field (keyboard + pointer focus) */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([hidden]):focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.search input:focus-visible,
+.mt-search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Belt-and-braces: any checkbox inside a switch stays a transparent hit-area,
+   even if a future global rule tries to theme it like an input. */
+.toggle input[type=checkbox] {
+  appearance: none; -webkit-appearance: none;
+  background: transparent; border: none; box-shadow: none; outline: none;
+}
 html.dark, html[data-theme="dark"] .toggle input[type=checkbox] {
   appearance: none; -webkit-appearance: none;
   background: transparent; border: none; box-shadow: none; outline: none;
 }
-html.dark, html[data-theme="dark"] input::placeholder { color: var(--text-3); }
 html.dark, html[data-theme="dark"] .search:focus-within { background: var(--surface); }
 
 /* urgency pills tuned for dark */
