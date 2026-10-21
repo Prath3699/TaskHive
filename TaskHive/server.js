@@ -428,13 +428,21 @@ function insertDemoContent(wsId, personKeys) {
   }
   wsStmt.counterBump().run(wsId, 100, maxIdx + 1000);
   for (const [iid, whoKey, text, agoMs, task] of SEED_INBOX) {
-    sqlite.prepare('INSERT INTO inbox_items (id,workspace_id,actor_key,text,task,at,ord) VALUES (?,?,?,?,?,?,?)')
-      .run(iid, wsId, pk(whoKey), text, task, new Date(now - agoMs).toISOString(), SEED_INBOX.findIndex(x => x[0] === iid));
+    wsStmt.inboxInsert().run(iid, wsId, pk(whoKey), text, task, new Date(now - agoMs).toISOString(), SEED_INBOX.findIndex(x => x[0] === iid));
   }
+  /* INSERT OR IGNORE everywhere: createWorkspace() already seeds the standard
+   * channel list for every workspace, so a plain INSERT here collided with
+   * those rows → SQLITE_CONSTRAINT UNIQUE(workspace_id, id) at startup. The
+   * seed ids are fixed constants reused per workspace (not generated unique);
+   * the fix is to tolerate the pre-existing rows instead of double-inserting.
+   * Messages get the same guard: only insert when the channel has none yet. */
   SEED_CHANNELS.forEach(([cid, topic], i) => {
-    sqlite.prepare('INSERT INTO channels (id,workspace_id,topic,ord) VALUES (?,?,?,?)').run(cid, wsId, topic, i);
-    for (const [whoKey, text, time] of (SEED_MESSAGES[cid] || [])) {
-      wsStmt.msgInsert().run(wsId, cid, pk(whoKey), text, time);
+    wsStmt.channelInsert().run(cid, wsId, topic, i);
+    const msgCount = sqlite.prepare('SELECT COUNT(*) AS n FROM channel_messages WHERE workspace_id=? AND channel=?').get(wsId, cid).n;
+    if (msgCount === 0) {
+      for (const [whoKey, text, time] of (SEED_MESSAGES[cid] || [])) {
+        wsStmt.msgInsert().run(wsId, cid, pk(whoKey), text, time);
+      }
     }
   });
 }
@@ -456,26 +464,39 @@ function provisionUser(userId, { sample }) {
 }
 
 function seedDemoWorkspace() {
+  /* Idempotent: if the demo workspace (or its meta pointer) already exists,
+   * reuse it instead of re-seeding — a plain INSERT of the fixed seed ids
+   * would hit UNIQUE(workspace_id,id). Wrapping the whole seed in one
+   * transaction means a mid-way failure rolls back and leaves no partial rows. */
   const existing = sqlite.prepare("SELECT id FROM workspaces WHERE kind='demo'").get();
-  if (existing) return existing.id;
-  const personKeys = {};
-  SEED_PEOPLE.forEach((p, i) => {
-    /* parth@catlas.inc doubles as the historical first/admin account so old
-     * databases keep their identity mapping when upgraded. */
-    const dup = sqlite.prepare('SELECT id FROM users WHERE email=?').get(p.email);
-    personKeys[p.key] = dup ? dup.id : createUser({ name: p.name, email: p.email, password: DEMO_PASSWORD,
-                                                    color: AVATAR_PALETTE[i % AVATAR_PALETTE.length], isDemo: true });
+  if (existing) { setMeta('demo_workspace_id', String(existing.id)); return existing.id; }
+  const doSeed = sqlite.transaction(() => {
+    const personKeys = {};
+    SEED_PEOPLE.forEach((p, i) => {
+      /* parth@catlas.inc doubles as the historical first/admin account so old
+       * databases keep their identity mapping when upgraded. */
+      const dup = sqlite.prepare('SELECT id FROM users WHERE email=?').get(p.email);
+      personKeys[p.key] = dup ? dup.id : createUser({ name: p.name, email: p.email, password: DEMO_PASSWORD,
+                                                      color: AVATAR_PALETTE[i % AVATAR_PALETTE.length], isDemo: true });
+    });
+    const wsId = createWorkspace('Catlas (demo)', 'demo', personKeys.p1);
+    SEED_PEOPLE.forEach((p, i) => addMembership(wsId, personKeys[p.key], i === 0 ? 'admin' : 'demo'));
+    insertDemoContent(wsId, personKeys);
+    setMeta('demo_workspace_id', String(wsId));
+    return wsId;
   });
-  const wsId = createWorkspace('Catlas (demo)', 'demo', personKeys.p1);
-  SEED_PEOPLE.forEach((p, i) => addMembership(wsId, personKeys[p.key], i === 0 ? 'admin' : 'demo'));
-  insertDemoContent(wsId, personKeys);
-  setMeta('demo_workspace_id', String(wsId));
-  return wsId;
+  return doSeed();
 }
 
 function bootstrapStore() {
   if (!sqlite) return;
   initSchema();
+  /* Self-heal: pointer lost but demo workspace present → restore pointer so we
+   * never re-seed into an existing workspace. */
+  if (!getMeta('demo_workspace_id')) {
+    const ex = sqlite.prepare("SELECT id FROM workspaces WHERE kind='demo'").get();
+    if (ex) setMeta('demo_workspace_id', String(ex.id));
+  }
   /* One-time migration from the legacy single-document JSON store. */
   const legacyFile = path.join(DATA_DIR, 'db.json');
   if (!getMeta('relational_v1') && fs.existsSync(legacyFile)) {
@@ -1438,7 +1459,7 @@ const server = http.createServer(async (req, res) => {
   serveStatic(req, res, url);
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, process.env.HOST || '0.0.0.0', () => {
   console.log(`TaskHive backend running at http://localhost:${PORT}`);
   console.log(`  API base:  http://localhost:${PORT}/api`);
   console.log(`  Database:  ${SQLITE_FILE}`);
