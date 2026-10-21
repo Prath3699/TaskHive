@@ -832,6 +832,50 @@ function guardWrite(res) {
   return false;
 }
 
+/* ------------------------------------------------------------------ */
+/* Error-handling layer (Phase 2)                                      */
+/* ------------------------------------------------------------------ */
+/* No Express here — these are plain helpers around the async route      */
+/* handlers. Every failure funnels through handleServerError(): it logs   */
+/* the full error server-side and answers JSON { error: { code,           */
+/* message } }. In production (NODE_ENV=production) only a generic       */
+/* message goes to the client — never a stack trace or internal detail.   */
+const IS_PROD = process.env.NODE_ENV === 'production';
+class HttpError extends Error {
+  constructor(status, message) { super(message); this.name = 'HttpError'; this.status = status; }
+}
+function httpError(status, message) { return new HttpError(status, message); }
+/* Wrap an async (or sync) handler fn so thrown errors / rejected promises
+ * reach onError instead of crashing the process. onError defaults to
+ * handleServerError; pass a custom one to answer with legacy-shaped JSON. */
+function asyncHandler(fn, onError) {
+  return (req, res, ...args) => {
+    try {
+      const r = fn(req, res, ...args);
+      if (r && typeof r.then === 'function') return r.catch((e) => (onError || handleServerError)(e, req, res));
+    } catch (e) { (onError || handleServerError)(e, req, res); }
+  };
+}
+function handleServerError(err, req, res) {
+  let status = 500, message = 'internal server error';
+  if (err instanceof HttpError) { status = err.status; message = err.message; }
+  else if (err && err.code === 'SqliteError') { status = 400; message = IS_PROD ? 'invalid request' : err.message; }
+  else if (err && (err.message === 'invalid JSON' || err.message === 'body too large')) { status = 400; message = err.message; }
+  const where = req ? `${req.method} ${req.url}` : '-';
+  console.error(`[error] ${where}:`, err && err.stack ? err.stack : err);
+  if (!res || !res.end || res.writableEnded || res.headersSent) return;   // response already sent/closed — log only
+  try {
+    send(res, status, { error: { code: status, message: IS_PROD ? (status >= 500 ? 'internal server error' : message) : message } });
+  } catch (_) { /* socket gone — nothing left to do */ }
+}
+/* Central 404 for anything under /api/ that no route matched. The log line
+ * always includes method + path so unknown endpoints are easy to spot in
+ * Render's output logs. */
+function apiNotFound(req, res, pathname) {
+  console.error(`[404] ${req.method} ${pathname}`);
+  return send(res, 404, { error: { code: 404, message: `unknown API endpoint: ${req.method} ${pathname}` } });
+}
+
 function sanitizeTask(input, existing = {}, ctx = null) {
   const t = { ...existing };
   if (typeof input.name === 'string' && input.name.trim()) t.name = cleanStr(input.name, 200);
@@ -1124,8 +1168,28 @@ async function handleApi(req, res, url) {
 
   const ctx = authContext(req);
 
+  /* Central error funnel for the whole auth surface (signup/login/logout/
+   * demo/demo-reset) — also used by the legacy aliases below. Logs the full
+   * error server-side and answers JSON { error: "<message>" } in the FLAT
+   * shape the SPA parses in api() (response shapes the frontend depends on
+   * must not change). In production, unexpected errors get a generic message;
+   * expected client errors keep their friendly text. No stack trace is ever
+   * sent to the client. */
+  const authError = (e, rq, rs) => {
+    let status = 500, message = 'internal server error';
+    if (e instanceof HttpError) { status = e.status; message = e.message; }
+    else if (e && e.code === 'SqliteError') { status = 400; message = IS_PROD ? 'invalid request' : e.message; }
+    else if (e && (e.message === 'invalid JSON' || e.message === 'body too large')) { status = 400; message = e.message; }
+    else if (e && e.message) { message = String(e.message); }
+    console.error(`[error] ${rq.method} ${rq.url}:`, e && e.stack ? e.stack : e);
+    if (!rs || !rs.end || rs.writableEnded || rs.headersSent) return;
+    try { send(rs, status, { error: message }); } catch (_) {}
+  };
+
   /* ================= AUTH API (/api/auth/*) ================= */
-  if (seg === 'auth') return authHandler(req, res, ctx, parts.slice(1).join('/'), method);
+  if (seg === 'auth') {
+    return asyncHandler(() => authHandler(req, res, ctx, parts.slice(1).join('/'), method), authError)(req, res);
+  }
 
   /* Legacy aliases kept for older clients: /api/login /api/logout /api/session.
    * NOTE: do NOT re-enter handleApi here — with the path normalization above,
@@ -1137,8 +1201,9 @@ async function handleApi(req, res, url) {
    * method as the 5th argument, NOT a path fragment (previously parts.slice(1)
    * landed in `method`, so 'login' !== undefined and every legacy call fell
    * through to the 404 "unknown auth endpoint"). */
-  if (seg === 'login'  && method === 'POST') return authHandler(req, res, ctx, 'login',  method);
-  if (seg === 'logout' && method === 'POST') return authHandler(req, res, ctx, 'logout', method);
+  /* Same wrapped delegation + flat-error funnel as /api/auth/* above. */
+  if (seg === 'login'  && method === 'POST') return asyncHandler(() => authHandler(req, res, ctx, 'login',  method), authError)(req, res);
+  if (seg === 'logout' && method === 'POST') return asyncHandler(() => authHandler(req, res, ctx, 'logout', method), authError)(req, res);
   if (seg === 'session' && method === 'GET') {
     return send(res, 200, ctx ? { user: publicUser(ctx.user) } : { user: null });
   }
@@ -1594,7 +1659,8 @@ async function handleApi(req, res, url) {
     return send(res, 405, { error: 'method not allowed' });
   }
 
-  return send(res, 404, { error: 'unknown API endpoint', endpoint: '/api/' + parts.join('/') });
+  /* Unknown /api/* route — central JSON 404 (logs method + path). */
+  return apiNotFound(req, res, '/api/' + parts.join('/'));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1641,7 +1707,12 @@ if (IS_MODULE) {
    * the wrapper sets TASKHIVE_READONLY_API and auth reads still work in memory. */
   module.exports = { handleApi, readBody, seedData: () => null,
                     loadDbAsync: async () => {}, flushSaves: async () => {} };
-} else {
+} else if (require.main === module) {
+/* Classic standalone mode ONLY: listen(), process-level handlers and signal
+ * handlers must never be installed when this file is required as a module
+ * (Netlify's api.mjs imports it with TASKHIVE_NO_LISTEN/TASKHIVE_READONLY_API
+ * set — see IS_MODULE above). The double guard keeps that contract even if
+ * someone requires() us without those env vars. */
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
@@ -1656,6 +1727,16 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
 
+  /* --- GET /health (no auth): Render-style probe with a cheap DB check.
+   * Answers 200 { status:"ok", db:"ok", uptime } or 503 when the DB check
+   * fails. /api/health (inside handleApi) is untouched and still works. --- */
+  if (url.pathname === '/health' && req.method === 'GET') {
+    let dbOk = false;
+    try { sqlite.prepare('SELECT 1 AS ok').get(); dbOk = true; } catch (_) { dbOk = false; }
+    return send(res, dbOk ? 200 : 503,
+      { status: dbOk ? 'ok' : 'error', db: dbOk ? 'ok' : 'fail', uptime: Math.round(process.uptime()) });
+  }
+
   if (!sqlite && url.pathname.startsWith('/api/') && !url.pathname.startsWith('/api/health')) {
     return send(res, 503, { error: 'database unavailable — run npm install better-sqlite3' });
   }
@@ -1664,12 +1745,11 @@ const server = http.createServer(async (req, res) => {
     /* Rate-limit all API traffic per IP (generous ceiling; auth has tighter limits). */
     const rl = rateLimit(`api:${clientIp(req)}`, 600, 60e3);
     if (!rl.allowed) return send(res, 429, { error: 'Too many requests' }, { 'Retry-After': String(rl.retryAfter) });
-    try {
-      await handleApi(req, res, url);
-    } catch (e) {
-      send(res, e.message === 'invalid JSON' || e.message === 'body too large' ? 400 : 500,
-           { error: e.message });
-    }
+    /* asyncHandler: central error funnel — logs server-side, answers JSON
+     * { error: "<message>" } (the flat shape app.js parses; response shapes
+     * the frontend depends on stay unchanged). No stack trace ever reaches
+     * the client; production hides unexpected internal messages. */
+    await asyncHandler(handleApi)(req, res, url);
     return;
   }
   if (url.pathname === '/api' || url.pathname === '/api/') {
@@ -1691,12 +1771,52 @@ const server = http.createServer(async (req, res) => {
       'POST   /api/purge                POST /api/reset-demo    (maintenance)',
     ]});
   }
+  /* Unknown non-API paths keep answering through serveStatic's plain 404;
+   * unknown /api/* paths answer JSON 404 at the end of handleApi. */
   serveStatic(req, res, url);
 });
+
+server.on('clientError', (err, socket) => {
+  /* Malformed HTTP from clients must not crash the process. */
+  console.error('[taskhive] clientError:', err.message);
+  if (socket.writable && !socket.destroyed) { socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); }
+  else socket.destroy();
+});
+
+/* ---- process-level safety nets (standalone mode only) ---- */
+process.on('unhandledRejection', (reason) => {
+  console.error('[taskhive] unhandledRejection:', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  /* Log and keep serving: after the asyncHandler funnels there should be no
+   * known path that throws here, but a single bad request must not take the
+   * whole service down. For genuinely fatal errors use an external restart
+   * (Render restarts crashed services automatically). */
+  console.error('[taskhive] uncaughtException:', err && err.stack ? err.stack : err);
+});
+
+/* ---- graceful shutdown (SIGTERM from Render redeploy/spin-down, SIGINT/Ctrl+C) ---- */
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[taskhive] ${signal} received — shutting down gracefully…`);
+  server.close(() => {                      // stop accepting new connections
+    try { if (sqlite) sqlite.close(); }    // WAL checkpoint happens on close
+    catch (e) { console.error('[taskhive] closing database failed:', e.message); }
+    console.log('[taskhive] shutdown complete.');
+    process.exit(0);
+  });
+  /* Safety net: force-exit if something keeps the server open (e.g. a hung
+   * keep-alive socket). Render sends SIGTERM then kills after its grace time. */
+  setTimeout(() => { console.error('[taskhive] forced exit after 5s grace'); process.exit(0); }, 5000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 
 server.listen(PORT, process.env.HOST || '0.0.0.0', () => {
   console.log(`TaskHive backend running at http://localhost:${PORT}`);
   console.log(`  API base:  http://localhost:${PORT}/api`);
   console.log(`  Database:  ${SQLITE_FILE}`);
 });
-} /* end else (classic server mode) */
+} /* end classic server mode (IS_MODULE / require.main guards) */
