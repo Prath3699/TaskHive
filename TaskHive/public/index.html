@@ -102,14 +102,30 @@
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
         </button>
         <nav class="crumbs" id="crumbs"></nav>
-        <div class="search">
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="9" cy="9" r="5.5"/><path d="m13.5 13.5 3.5 3.5"/></svg>
-          <input id="global-search" type="text" placeholder="Find feature" aria-label="Find feature" />
+        <div class="search" id="search-wrap">
+          <button id="search-icon-btn" class="icon-btn search-icon-btn" aria-label="Open search" aria-expanded="false">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="9" cy="9" r="5.5"/><path d="m13.5 13.5 3.5 3.5"/></svg>
+          </button>
+          <svg class="search-ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="m13.5 13.5 3.5 3.5"/></svg>
+          <input id="global-search" type="text" role="combobox" aria-expanded="false" aria-controls="search-results" aria-autocomplete="list" aria-label="Search tasks, projects, people and channels" placeholder="Search tasks, projects, people…" autocomplete="off" />
+          <kbd class="kbd-hint kbd-ctrl" aria-hidden="true">Ctrl K</kbd>
+          <kbd class="kbd-hint kbd-slash" aria-hidden="true">/</kbd>
+          <div id="search-results" class="search-results hidden" role="listbox" aria-label="Search results"></div>
         </div>
-        <button id="new-feature-btn" class="btn btn-primary">
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 10h12M10 4v12"/></svg>
-          New feature
-        </button>
+        <div class="new-split" id="new-split">
+          <button id="new-task-btn" class="btn btn-primary split-main" aria-label="Create a new task">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 10h12M10 4v12"/></svg>
+            <span>New task</span>
+            <kbd class="kbd-hint" aria-hidden="true">C</kbd>
+          </button><button id="new-split-toggle" class="btn btn-primary split-caret" aria-label="More create options" aria-haspopup="menu" aria-expanded="false">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg>
+          </button>
+          <div id="new-split-menu" class="split-menu hidden" role="menu" aria-label="Create">
+            <button role="menuitem" data-new="task">New task <kbd>C</kbd></button>
+            <button role="menuitem" data-new="project">New project</button>
+            <button role="menuitem" data-new="channel">New channel</button>
+          </div>
+        </div>
       </header>
 
       <!-- Page content injected by the router -->
@@ -119,11 +135,16 @@
     </main>
   </div>
 
+  <!-- Floating "New task" button (phones only, see styles.css) -->
+  <button id="new-fab" class="new-fab" aria-label="Create a new task">
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 10h12M10 4v12"/></svg>
+  </button>
+
   <!-- ======================= MODAL ======================= -->
   <div id="modal-overlay" class="modal-overlay hidden">
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-head">
-        <h2 id="modal-title">New feature</h2>
+        <h2 id="modal-title">New task</h2>
         <button id="modal-close" class="icon-btn" aria-label="Close">✕</button>
       </div>
       <div id="modal-body"></div>

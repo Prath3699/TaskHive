@@ -463,17 +463,21 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeCol
 window.addEventListener('scroll', () => { if (document.querySelector('.col-menu')) closeColMenus(); }, true);
 window.addEventListener('resize', () => { if (document.querySelector('.col-menu')) closeColMenus(); });
 
-/* Keyboard shortcuts: N = new feature, / = focus search (when not typing) */
+/* Keyboard shortcuts: C/N = new task, / or Ctrl/Cmd+K = focus search (when not typing) */
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'l') {
     e.preventDefault(); toggleDarkMode(); return;
   }
-  if (e.key === 'Escape') { closeModal(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault(); focusGlobalSearch(); return;
+  }
+  if (e.key === 'Escape') { closeSearchResults(); closeSplitMenu(); closeModal(); return; }
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
   if ((e.metaKey || e.ctrlKey) && !typing && e.key.toLowerCase() === 'z') { e.preventDefault(); undoLast(); return; }
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === '/') { e.preventDefault(); $('#global-search').focus(); }
-  if (e.key.toLowerCase() === 'n') { e.preventDefault(); showNewFeatureModal(); }
+  if (e.key === '/') { e.preventDefault(); focusGlobalSearch(); }
+  const k = e.key.toLowerCase();
+  if (k === 'c' || k === 'n') { e.preventDefault(); showNewFeatureModal(); }
 });
 
 /* ============================ SHARED COMPONENTS ============================ */
@@ -681,7 +685,7 @@ function boardSectionHtml(title, tabs, activeTab, tasks) {
       </div>` : ''}
       <div id="board-body">
         ${tasks.length ? `${toolbarHtml()}${taskTableHtml(tasks)}`
-          : `<div class="empty-state">No tasks in “${esc(title)}” yet.<br><button class="btn btn-primary btn-sm" id="new-feature-btn" style="margin-top:10px">＋ Create the first task</button></div>`}
+          : `<div class="empty-state">No tasks yet. Create your first task<br><button class="btn btn-primary btn-sm new-task-empty" style="margin-top:10px">＋ New task</button></div>`}
       </div>
     </section>`;
 }
@@ -1122,7 +1126,7 @@ routes.home = () => {
       </ul>
       <h2 class="section-title">Your tasks</h2>
       ${mine.length ? taskTableHtml(mine)
-        : '<div class="empty-state">Nothing assigned to you right now. Check the <a href="#/projects">Projects</a> board or create a new feature.</div>'}
+        : '<div class="empty-state">Nothing assigned to you right now. Check the <a href="#/projects">Projects</a> board or create a new task.</div>'}
     </section>`;
 };
 
@@ -1596,7 +1600,7 @@ routes.settings = () => {
 routes.help = () => {
   setCrumbs([{ label: 'Support' }, { label: 'Help & support' }]);
   const faqs = [
-    ['How do I create a task?', 'Use the “New feature” button in the top bar of any project board.'],
+    ['How do I create a task?', 'Use the “New task” button in the top bar of any project board.'],
     ['Where are my saved items?', 'Click ☆ in a task’s Properties panel — they appear under Saved items.'],
     ['How does Inbox work?', 'Mentions, assignments and reviews land there; click a notification to jump to its task.'],
     ['Can I share a project?', 'Yes — the Share button copies a workspace link to your clipboard.'],
@@ -1640,7 +1644,7 @@ function showShareModal(projectName) {
 }
 
 function showNewFeatureModal() {
-  openModal('New feature', `
+  openModal('New task', `
     <form id="new-feature-form">
       <label>Name<input id="nf-name" type="text" required placeholder="e.g. Add keyboard shortcuts" /></label>
       <label>Progress<select id="nf-progress">${Object.keys(PROGRESS).map(k => `<option>${k}</option>`).join('')}</select></label>
@@ -1692,7 +1696,14 @@ document.body.addEventListener('click', (e) => {
   if (goto) { location.hash = goto; return; }
 
   if (el.id === 'upgrade-btn') return showUpgradeModal();
-  if (el.id === 'new-feature-btn') return showNewFeatureModal();
+  if (el.id === 'new-task-btn' || el.classList.contains('new-task-empty')) return showNewFeatureModal();
+  if (el.id === 'new-fab') { e.preventDefault(); return showNewFeatureModal(); }
+  if (el.dataset.new !== undefined && el.closest('#new-split-menu')) {
+    closeSplitMenu();
+    if (el.dataset.new === 'task') return showNewFeatureModal();
+    if (el.dataset.new === 'project') return openModal('New project', `<form id="new-project-form"><label>Project name<input id="np-name" type="text" required placeholder="e.g. Mobile App v3" /></label><label>Owner<select id="np-owner">${PEOPLE.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}</select></label><button class="btn btn-primary">Create project</button></form>`);
+    if (el.dataset.new === 'channel') return toast('ℹ Channel creation is not available in this demo yet.');
+  }
   if (el.dataset.plan) { closeModal(); return toast(`🎉 ${el.dataset.plan} plan selected (demo)`); }
   if (el.id === 'copy-link') {
     const inp = $('#share-link');
@@ -1819,7 +1830,7 @@ document.body.addEventListener('click', (e) => {
     return;
   }
   if (el.id === 'contact-support') return openModal('Contact support', `<form id="support-form"><label>Subject<input type="text" required /></label><label>Message<textarea rows="4" required></textarea></label><button class="btn btn-primary">Send message</button></form>`);
-  if (el.id === 'keyboard-shortcuts') return openModal('Keyboard shortcuts', `<ul class="shortcuts"><li><kbd>N</kbd> New feature</li><li><kbd>/</kbd> Focus search</li><li><kbd>Esc</kbd> Close dialogs</li><li><kbd>Ctrl/Cmd</kbd>+<kbd>Z</kbd> Undo last change</li><li><kbd>Ctrl/Cmd</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> Toggle dark mode</li><li><kbd>Enter</kbd> on a focused row opens the task</li></ul>`);
+  if (el.id === 'keyboard-shortcuts') return openModal('Keyboard shortcuts', `<ul class="shortcuts"><li><kbd>C</kbd> New task · <kbd>/</kbd> or <kbd>Ctrl K</kbd> Search</li><li><kbd>/</kbd> Focus search</li><li><kbd>Esc</kbd> Close dialogs</li><li><kbd>Ctrl/Cmd</kbd>+<kbd>Z</kbd> Undo last change</li><li><kbd>Ctrl/Cmd</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> Toggle dark mode</li><li><kbd>Enter</kbd> on a focused row opens the task</li></ul>`);
 
   // task row selection inside boards
   const tr = e.target.closest('.task-table tbody tr');
@@ -1990,7 +2001,7 @@ function overviewHtml() {
       <div class="team-row">
         ${PEOPLE.map(p => `<button class="avatar link-avatar" data-person="${p.id}" style="--a:${p.color}" title="${p.name}">${p.initials}</button>`).join('')}
       </div>
-      <p class="modal-lead">Switch to the <strong>Tasks</strong> tab to see all ${scope.length} features.</p>
+      <p class="modal-lead">Switch to the <strong>Tasks</strong> tab to see all ${scope.length} tasks.</p>
     </div>`;
 }
 
@@ -2024,14 +2035,119 @@ document.body.addEventListener('input', (e) => {
   }
 });
 
+/* ============================ GLOBAL SEARCH (dropdown) ============================ */
+
+const searchWrap = () => $('#search-wrap');
+let searchPickIdx = -1;
+
+function focusGlobalSearch() {
+  const inp = $('#global-search');
+  if (!inp) return;
+  searchWrap().classList.add('mobile-open');           // expands the icon-only input on phones
+  $('#search-icon-btn')?.setAttribute('aria-expanded', 'true');
+  inp.focus();
+  updateSearchResults(inp.value);
+}
+
+function openSplitMenu() {
+  $('#new-split-menu')?.classList.remove('hidden');
+  $('#new-split-toggle')?.setAttribute('aria-expanded', 'true');
+}
+function closeSplitMenu() {
+  $('#new-split-menu')?.classList.add('hidden');
+  $('#new-split-toggle')?.setAttribute('aria-expanded', 'false');
+}
+$('#new-split-toggle').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const menu = $('#new-split-menu');
+  menu.classList.contains('hidden') ? openSplitMenu() : closeSplitMenu();
+});
+document.addEventListener('click', (e) => {
+  const split = $('#new-split');
+  if (split && !split.contains(e.target)) closeSplitMenu();
+  const wrap = searchWrap();
+  if (wrap && !wrap.contains(e.target)) {
+    closeSearchResults();
+    wrap.classList.remove('mobile-open');            // collapse the expanded phone search
+    $('#search-icon-btn')?.setAttribute('aria-expanded', 'false');
+  }
+});
+
+function closeSearchResults() {
+  const box = $('#search-results');
+  if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+  $('#global-search')?.setAttribute('aria-expanded', 'false');
+  searchPickIdx = -1;
+}
+
+function searchGroups(q) {
+  q = q.trim().toLowerCase();
+  if (!q) return [];
+  const has = (s) => String(s || '').toLowerCase().includes(q);
+  const g = [
+    { name: 'Tasks', items: TASKS.filter(t => has(t.name) || has(t.id)).slice(0, 6).map(t =>
+        ({ label: t.name, sub: t.id, href: `#/task/${t.idx}`, icon: '✔' })) },
+    { name: 'Projects', items: PROJECTS.filter(p => has(p.name)).slice(0, 5).map(p =>
+        ({ label: p.name, sub: `${TASKS.filter(t => t.project === p.id).length} tasks`, href: `#/project/${p.id}`, icon: '📁' })) },
+    { name: 'Channels', items: Object.entries(CHANNELS)
+        .filter(([key, ch]) => has(key) || has(ch.topic)).slice(0, 5).map(([key]) =>
+        ({ label: '# ' + key.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), href: `#/channel/${key}`, icon: '#' })) },
+    { name: 'People', items: PEOPLE.filter(p => has(p.name)).slice(0, 5).map(p =>
+        ({ label: p.name, sub: 'Person', personId: p.id, icon: '👤' })) },
+  ];
+  return g.filter(x => x.items.length);
+}
+
+function renderSearchDropdown(q) {
+  const box = $('#search-results');
+  const inp = $('#global-search');
+  if (!box || !q.trim()) { closeSearchResults(); return; }
+  const groups = searchGroups(q);
+  let flat = [], gi = 0;
+  box.innerHTML = groups.length ? groups.map(gr => `
+      <div class="sr-group" role="group" aria-label="${gr.name}">
+        <div class="sr-heading">${gr.name}</div>
+        ${gr.items.map(it => { const i = gi++; flat.push(i, it); return `
+          <button type="button" class="sr-item" data-sri="${i}" data-href="${it.href || ''}" data-person="${it.personId || ''}" role="option" aria-selected="false">
+            <span class="sr-icon" aria-hidden="true">${it.icon}</span>
+            <span class="sr-label">${esc(it.label)}</span>
+            ${it.sub ? `<span class="sr-sub">${esc(it.sub)}</span>` : ''}
+          </button>`; }).join('')}
+      </div>`).join('')
+    : '<div class="sr-empty">No results</div>';
+  box.dataset.count = String(flat.length / 2);
+  box.classList.remove('hidden');
+  inp.setAttribute('aria-expanded', 'true');
+  searchPickIdx = -1;
+}
+
+function searchPick(i, activate) {
+  const box = $('#search-results');
+  const item = box.querySelector(`.sr-item[data-sri="${i}"]`);
+  if (!item) return;
+  box.querySelectorAll('.sr-item[aria-selected="true"]').forEach(el => el.removeAttribute('aria-selected'));
+  item.setAttribute('aria-selected', 'true');
+  item.scrollIntoView({ block: 'nearest' });
+  if (activate) {
+    closeSearchResults();
+    if (item.dataset.person) {
+      const p = personById(item.dataset.person);
+      return openModal(p.name, `<div class="profile-head"><span class="avatar" style="--a:${p.color};width:48px;height:48px;font-size:16px">${p.initials}</span><div><h3>${esc(p.name)}</h3></div></div>`);
+    }
+    if (item.dataset.href) location.hash = item.dataset.href;
+  }
+}
+
+function updateSearchResults(q) {
+  renderSearchDropdown(q);
+}
+
 $('#global-search').addEventListener('input', (e) => {
   searchTerm = e.target.value;
+  updateSearchResults(searchTerm);
   const onBoard = ['project', 'task'].includes(currentRoute);
   if (onBoard && $('#board-body')) {
     renderBoardBody(); // keeps toolbar, filters and sort intact
-  } else if (!onBoard && searchTerm.trim()) {
-    // searching from a non-board page: jump to the Q3 board with the filter applied
-    location.hash = '#/project/q3-plan';
   } else if (!onBoard) {
     // live search results for Home / My tasks / Saved tables
     const tbody = $('#task-rows');
@@ -2047,7 +2163,30 @@ $('#global-search').addEventListener('input', (e) => {
   }
 });
 $('#global-search').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !$('#task-rows')) location.hash = '#/project/q3-plan';
+  const box = $('#search-results');
+  const open = box && !box.classList.contains('hidden') && +box.dataset.count > 0;
+  if (open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    e.preventDefault();
+    const n = +box.dataset.count;
+    searchPickIdx = e.key === 'ArrowDown' ? (searchPickIdx + 1) % n : (searchPickIdx - 1 + n) % n;
+    searchPick(searchPickIdx, false);
+    return;
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (open && searchPickIdx >= 0) { searchPick(searchPickIdx, true); return; }
+    if (searchTerm.trim()) { closeSearchResults(); location.hash = '#/project/q3-plan'; } // legacy: jump to board with filter
+    return;
+  }
+  if (e.key === 'Escape') { e.stopPropagation(); closeSearchResults(); }
+});
+$('#search-results').addEventListener('click', (e) => {
+  const item = e.target.closest('.sr-item');
+  if (item) searchPick(+item.dataset.sri, true);
+});
+$('#search-icon-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  focusGlobalSearch();
 });
 
 /* ============================ FORM SUBMITS (delegated) ============================ */

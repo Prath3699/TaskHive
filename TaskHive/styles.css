@@ -280,7 +280,53 @@ body {
 
 .search:focus-within { border-color: var(--accent); background: var(--surface); }
 .search svg { width: 16px; height: 16px; color: var(--text-3); flex-shrink: 0; }
-.search input { border: none; outline: none; background: transparent; font: inherit; width: 100%; }
+.search input { border: none; outline: none; background: transparent; font: inherit; width: 100%; min-width: 0; }
+
+/* ---- keyboard hint badges inside the search box ---- */
+.search .kbd-hint { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0;
+  font-size: 10.5px; line-height: 1; padding: 3px 6px; border-radius: 5px;
+  background: var(--kbd-bg); border: 1px solid var(--border); color: var(--text-3); }
+.search .kbd-slash { padding: 3px 7px; }
+@media (pointer: coarse) { .search .kbd-hint { display: none; } }  /* hide Ctrl-K hint on touch devices */
+
+/* ---- search results dropdown ---- */
+.search { position: relative; }
+.search-results {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 200;
+  max-height: 340px; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--surface, #fff); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(10,20,40,.16); padding: 4px;
+}
+.sr-heading { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--text-3); padding: 8px 10px 4px; }
+.sr-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  border: none; background: none; font: inherit; color: var(--text, inherit); cursor: pointer;
+  padding: 7px 10px; border-radius: 7px; min-height: 34px; }
+.sr-item:hover, .sr-item[aria-selected="true"] { background: var(--sel-row, rgba(124,140,255,.12)); }
+.sr-icon { flex-shrink: 0; width: 16px; text-align: center; color: var(--text-3); font-style: normal; }
+.sr-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.sr-sub { flex-shrink: 0; font-size: 11px; color: var(--text-3); }
+.sr-empty { padding: 16px 12px; text-align: center; color: var(--text-3); font-size: 13px; }
+
+/* ---- "New task" split button ---- */
+.new-split { position: relative; display: inline-flex; flex-shrink: 0; }
+.split-main { display: inline-flex; align-items: center; gap: 8px; border-top-right-radius: 0 !important; border-bottom-right-radius: 0 !important; }
+.split-caret { display: inline-flex; align-items: center; justify-content: center; margin-left: 1px;
+  padding: 8px 9px !important; border-top-left-radius: 0 !important; border-bottom-left-radius: 0 !important; }
+.split-caret svg { width: 15px; height: 15px; }
+.split-main .kbd-hint { background: rgba(255,255,255,.18); border: 1px solid rgba(255,255,255,.35);
+  color: inherit; font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 4px; }
+.split-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 200; min-width: 190px;
+  background: var(--surface, #fff); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(10,20,40,.16); padding: 4px; display: flex; flex-direction: column; }
+.split-menu button { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  border: none; background: none; font: inherit; text-align: left; color: var(--text, inherit);
+  padding: 8px 10px; border-radius: 7px; cursor: pointer; min-height: 36px; }
+.split-menu button:hover { background: var(--sel-row, rgba(124,140,255,.12)); }
+.split-menu kbd { font-size: 10px; }
+
+/* ---- floating New-task FAB (phones only) ---- */
+.new-fab { display: none; }
 
 /* ======================= CONTENT ======================= */
 .content {
@@ -1438,7 +1484,7 @@ html.dark, html[data-theme="dark"] .nav-item:focus-visible, html.dark, html[data
   }
   .topbar { flex-wrap: wrap; gap: 10px; padding: 10px 14px; }
   .search { order: 3; flex: 1 1 100%; max-width: none; margin-left: 0; }
-  .topbar #new-feature-btn { margin-left: auto; }
+  .topbar #new-split { margin-left: auto; }
   .topbar .btn svg { width: 15px; height: 15px; }
 
   /* Touch targets ≥ ~40px */
@@ -1520,7 +1566,7 @@ html.dark, html[data-theme="dark"] .nav-item:focus-visible, html.dark, html[data
 }
 
 @media (max-width: 480px) {
-  .topbar .btn#new-feature-btn span, .topbar #new-feature-btn { padding: 8px 12px; font-size: 13px; }
+  .topbar #new-split .btn { padding: 8px 12px; font-size: 13px; }
   .project-title { font-size: 17px; }
   .board-head { gap: 10px; flex-wrap: wrap; }
   .tabs { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
@@ -1582,4 +1628,25 @@ html.dark, html[data-theme="dark"] .rm-chipf.on { color: #fff; }
   /* keep content clear of the fixed bar */
   .app-shell main, .page-pad { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
   body.show-login .bottom-tabs { visibility: hidden; }
+}
+
+/* ======================= ≤600px: icon search + FAB new task ======================= */
+@media (max-width: 600px) {
+  .search .search-ico, .search input, .search .kbd-hint { display: none; }
+  .search-icon-btn { display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; border-radius: 10px; }
+  .search { flex: 0 0 auto; margin-left: 0; order: 2; padding: 0; background: transparent; border: none; }
+  .search.mobile-open { flex: 1 1 100%; order: 3; }
+  .search.mobile-open .search-icon-btn { display: none; }
+  .search.mobile-open .search-ico { display: block; }
+  .search.mobile-open input { display: block; }
+  .search-results { left: 0; right: 0; }
+  #new-split { display: none; }               /* replaced by the floating button below */
+  .new-fab { display: inline-flex; align-items: center; justify-content: center;
+    position: fixed; right: 16px; z-index: 130;
+    bottom: calc(72px + env(safe-area-inset-bottom) + 12px);   /* above the bottom nav */
+    width: 52px; height: 52px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--accent); color: #fff; box-shadow: 0 6px 18px rgba(10,20,40,.28); }
+  .new-fab svg { width: 22px; height: 22px; }
+  body.show-login .new-fab { display: none; }
 }
