@@ -856,24 +856,34 @@ function asyncHandler(fn, onError) {
     } catch (e) { (onError || handleServerError)(e, req, res); }
   };
 }
+/* Central error responder: every failure path funnels through here. Logs the
+ * full error server-side and answers JSON { error: { code, message } } — never
+ * a stack trace. When NODE_ENV=production, unexpected internal messages are
+ * replaced with a generic one. `flat` keeps the historical { error: "<msg>" }
+ * shape for the auth surface that app.js parses (response shapes the frontend
+ * depends on must not change). */
+function sendError(res, status, code, message, err, req, flat) {
+  const where = req ? `${req.method} ${req.url}` : '-';
+  if (err !== undefined) console.error(`[error] ${where}:`, err && err.stack ? err.stack : err);
+  if (!res || !res.end || res.writableEnded || res.headersSent) return;   // response already sent/closed — log only
+  const msg = (IS_PROD && status >= 500) ? 'internal server error' : message;
+  try {
+    send(res, status, flat ? { error: msg } : { error: { code, message: msg } });
+  } catch (_) { /* socket gone — nothing left to do */ }
+}
 function handleServerError(err, req, res) {
   let status = 500, message = 'internal server error';
   if (err instanceof HttpError) { status = err.status; message = err.message; }
   else if (err && err.code === 'SqliteError') { status = 400; message = IS_PROD ? 'invalid request' : err.message; }
   else if (err && (err.message === 'invalid JSON' || err.message === 'body too large')) { status = 400; message = err.message; }
-  const where = req ? `${req.method} ${req.url}` : '-';
-  console.error(`[error] ${where}:`, err && err.stack ? err.stack : err);
-  if (!res || !res.end || res.writableEnded || res.headersSent) return;   // response already sent/closed — log only
-  try {
-    send(res, status, { error: { code: status, message: IS_PROD ? (status >= 500 ? 'internal server error' : message) : message } });
-  } catch (_) { /* socket gone — nothing left to do */ }
+  sendError(res, status, status, message, err, req);
 }
 /* Central 404 for anything under /api/ that no route matched. The log line
  * always includes method + path so unknown endpoints are easy to spot in
  * Render's output logs. */
 function apiNotFound(req, res, pathname) {
-  console.error(`[404] ${req.method} ${pathname}`);
-  return send(res, 404, { error: { code: 404, message: `unknown API endpoint: ${req.method} ${pathname}` } });
+  console.error(`[404] ${req.method} ${pathname}`);   // method + path in the server log
+  return sendError(res, 404, 404, `unknown API endpoint: ${req.method} ${pathname}`, undefined, req);
 }
 
 function sanitizeTask(input, existing = {}, ctx = null) {
@@ -1181,9 +1191,7 @@ async function handleApi(req, res, url) {
     else if (e && e.code === 'SqliteError') { status = 400; message = IS_PROD ? 'invalid request' : e.message; }
     else if (e && (e.message === 'invalid JSON' || e.message === 'body too large')) { status = 400; message = e.message; }
     else if (e && e.message) { message = String(e.message); }
-    console.error(`[error] ${rq.method} ${rq.url}:`, e && e.stack ? e.stack : e);
-    if (!rs || !rs.end || rs.writableEnded || rs.headersSent) return;
-    try { send(rs, status, { error: message }); } catch (_) {}
+    sendError(rs, status, status, message, e, rq, true);   // flat {error:"msg"} — shape app.js parses
   };
 
   /* ================= AUTH API (/api/auth/*) ================= */
@@ -1733,8 +1741,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/health' && req.method === 'GET') {
     let dbOk = false;
     try { sqlite.prepare('SELECT 1 AS ok').get(); dbOk = true; } catch (_) { dbOk = false; }
-    return send(res, dbOk ? 200 : 503,
-      { status: dbOk ? 'ok' : 'error', db: dbOk ? 'ok' : 'fail', uptime: Math.round(process.uptime()) });
+    if (!dbOk) return sendError(res, 503, 503, 'database check failed', undefined, req);
+    return send(res, 200, { status: 'ok', db: 'ok', uptime: Math.round(process.uptime()) });
   }
 
   if (!sqlite && url.pathname.startsWith('/api/') && !url.pathname.startsWith('/api/health')) {
