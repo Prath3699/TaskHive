@@ -843,7 +843,7 @@ function renderLoginScreen() {
     <div class="login-card">
       ${brand}${notice}
       <form id="login-form" autocomplete="on" novalidate>
-        <label>Email<input id="login-email" type="email" required placeholder="you@example.com" autocomplete="email" /></label>
+        <label>Email<input id="login-email" type="email" required placeholder="you@example.com" autocomplete="username" /></label>
         ${pwField('login-password', 'Password', '••••••••', 'current-password')}
         <button type="submit" class="btn btn-primary btn-block" id="login-submit">Sign in</button>
       </form>

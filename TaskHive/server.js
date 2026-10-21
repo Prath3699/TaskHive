@@ -49,7 +49,9 @@ const READONLY_API = !!process.env.TASKHIVE_READONLY_API || IS_MODULE;
  * ephemeral (DB resets + re-seeds on redeploy/spin-down); render.yaml documents
  * how to attach a persistent disk on the starter plan. */
 const DATA_DIR = process.env.TASKHIVE_DATA_DIR || path.join(ROOT, 'data');
-const SQLITE_FILE = path.join(DATA_DIR, 'taskhive.db');
+/* Full database file path — overrides TASKHIVE_DATA_DIR (useful on Render when
+ * a persistent disk is mounted at an arbitrary mount point). */
+const SQLITE_FILE = process.env.TASKHIVE_DB_PATH || path.join(DATA_DIR, 'taskhive.db');
 const PORT = Number(process.argv[2] || process.env.PORT || 3000);
 
 if (process.env.DATABASE_URL) {
@@ -76,9 +78,29 @@ function verifyPassword(pw, stored) {
   }
   const [, saltHex, hashHex] = stored.split('$');
   if (!saltHex || !hashHex) return false;
-  const a = Buffer.from(hashHex, 'hex');
-  const b = crypto.scryptSync(String(pw), Buffer.from(saltHex, 'hex'), a.length, SCRYPT_PARAMS);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  let a; try { a = Buffer.from(hashHex, 'hex'); } catch (_) { return false; }
+  /* Always compute scrypt against the STORED key length so wrong-password and
+   * corrupt-hash paths take the same time. */
+  const b = crypto.scryptSync(String(pw), Buffer.from(saltHex, 'hex'), Math.max(a.length, 1), SCRYPT_PARAMS);
+  try { return crypto.timingSafeEqual(a, b); }
+  catch (_) { return false; }                 // length mismatch ⇒ not equal
+}
+/* Temporary login-failure diagnostics (server-side only). Logs WHY a login
+ * failed — never the password, never the hash. The email is reduced to a
+ * short salted fingerprint so log lines can be correlated with rows without
+ * storing addresses in plain text. Remove once the field issue is resolved. */
+const AUTH_LOG_SALT = crypto.randomBytes(8).toString('hex');
+function logAuthFail(kind, email, reason) {
+  const fp = crypto.createHash('sha256').update(AUTH_LOG_SALT + ':' + email).digest('hex').slice(0, 8);
+  console.warn(`[auth] ${kind} failed: ${reason}; email#${fp}`);
+}
+
+/* Shared email normalization — used by signup, login and every user lookup so
+ * the value written at signup is byte-identical to the one read back at login.
+ * cleanStr() trims + strips control chars; lowercasing happens INSIDE cleanStr's
+ * result path below to keep ordering irrelevant. */
+function normalizeEmail(raw) {
+  return cleanStr(String(raw == null ? '' : raw).toLowerCase(), 254);
 }
 
 /* ------------------------------------------------------------------ */
@@ -368,8 +390,11 @@ function allocIds(wsId, count) {
 function createUser({ name, email, password, color, isDemo }) {
   const info = sqlite.prepare(
     'INSERT INTO users (name,email,password_hash,avatar_color,created_at,is_demo,email_verified,last_login) VALUES (@name,@email,@pw,@color,@created,@demo,@verified,@lastLogin)'
-  ).run({ name, email: String(email).toLowerCase(), pw: hashPassword(password), color,
+  ).run({ name, email: normalizeEmail(email), pw: hashPassword(password), color,
           created: new Date().toISOString(), verified: 1, demo: isDemo ? 1 : 0, lastLogin: null });
+  /* Check the insert actually landed — previously a failed INSERT still let
+   * signup return 201 "success" with lastInsertRowid pointing at nothing. */
+  if (!info || !info.changes) throw new Error('user insert failed');
   return info.lastInsertRowid;
 }
 function createWorkspace(name, kind, ownerId) {
@@ -450,6 +475,14 @@ function insertDemoContent(wsId, personKeys) {
 /* A brand-new signup gets an empty personal workspace — except the first
  * account ever, which inherits the classic demo dataset so the app has
  * something to show right away (matches "onboarding sample data"). */
+/* Shared email lookup — single point of truth for how a user row is found.
+ * Users are stored globally (table `users`, UNIQUE email); workspaces/memberships
+ * only decide which workspace a session opens, never which row login reads. */
+function getUserByEmail(email, fullRow) {
+  const sql = fullRow ? 'SELECT * FROM users WHERE email=?' : 'SELECT id FROM users WHERE email=?';
+  return sqlite.prepare(sql).get(normalizeEmail(email));
+}
+
 function provisionUser(userId, { sample }) {
   const u = sqlite.prepare('SELECT * FROM users WHERE id=?').get(userId);
   const wsId = createWorkspace(`${u.name.split(' ')[0]}'s workspace`, 'personal', userId);
@@ -874,18 +907,22 @@ if (!sqlite) return send(res, 503, { error: 'database unavailable' });
       if (!sr.allowed) return send(res, 429, { error: 'Too many sign-ups from this address — try again later' }, { 'Retry-After': String(sr.retryAfter) });
       let b; try { b = await readBody(req); } catch (e) { return send(res, 400, { error: e.message }); }
       const name = cleanStr(b.name, 80);
-      const email = cleanStr(String(b.email || '').toLowerCase(), 254);
+      const email = normalizeEmail(b.email);            // shared normalization (trim + lowercase)
       const password = typeof b.password === 'string' ? b.password : '';
       const errors = [];
       if (name.length < 2) errors.push('Please enter your name (min 2 characters)');
       if (!EMAIL_RE.test(email)) errors.push('Please enter a valid email address');
       if (password.length < 8) errors.push('Password must be at least 8 characters');
       if (errors.length) return send(res, 400, { error: errors.join('. ') });
-      if (sqlite.prepare('SELECT id FROM users WHERE email=?').get(email)) {
+      if (getUserByEmail(email)) {
         return send(res, 409, { error: 'That email is already registered. Try logging in instead.' });
       }
       const color = AVATAR_PALETTE[Math.floor(Math.random() * AVATAR_PALETTE.length)];
-      const userId = createUser({ name, email, password, color, isDemo: false });
+      /* If the INSERT fails (constraint or disk error) createUser now throws —
+       * answer 500 instead of pretending signup succeeded. */
+      let userId;
+      try { userId = createUser({ name, email, password, color, isDemo: false }); }
+      catch (e) { console.error('[auth] signup insert failed:', e.message); return send(res, 500, { error: 'could not create account' }); }
       /* Sample data is strictly OPT-IN: only seed when the checkbox was ticked.
    * (Previously everything except explicit false/0/'false' counted as a yes,
    * so unchecked forms / non-boolean payloads still got the demo board.) */
@@ -904,11 +941,21 @@ if (!sqlite) return send(res, 503, { error: 'database unavailable' });
       const lr = rateLimit(`login:${clientIp(req)}`, 10, 60e3);
       if (!lr.allowed) return send(res, 429, { error: 'Too many login attempts — try again later' }, { 'Retry-After': String(lr.retryAfter) });
       let b; try { b = await readBody(req); } catch (e) { return send(res, 400, { error: e.message }); }
-      const email = cleanStr(String(b.email || '').toLowerCase(), 254);
+      const email = normalizeEmail(b.email);            // same shared normalization as signup
       const password = typeof b.password === 'string' ? b.password : '';
-      const u = sqlite.prepare('SELECT * FROM users WHERE email=?').get(email);
-      const ok = u && verifyPassword(password, u.password_hash);
-      if (!ok) return send(res, 401, { error: 'Invalid email or password' });   // generic on purpose
+      const u = getUserByEmail(email, true);
+      /* Temporary login-failure diagnostics: reason only — never the password,
+       * and only a salted fingerprint of the email to correlate rows. The
+       * client always gets the same generic message either way. */
+      if (!u) {
+        logAuthFail('login', email, 'user not found');
+        return send(res, 401, { error: 'Invalid email or password' });
+      }
+      const ok = verifyPassword(password, u.password_hash);
+      if (!ok) {
+        logAuthFail('login', email, `password mismatch (user id ${u.id}, stored-hash-format ${String(u.password_hash).slice(0, 2)})`);
+        return send(res, 401, { error: 'Invalid email or password' });   // generic on purpose
+      }
       if (ok === 'migrate') sqlite.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hashPassword(password), u.id);
       const ws = sqlite.prepare('SELECT w.* FROM memberships m JOIN workspaces w ON w.id=m.workspace_id WHERE m.user_id=? ORDER BY m.workspace_id LIMIT 1').get(u.id);
       const token = createSession(u.id, ws ? ws.id : null);
@@ -943,9 +990,14 @@ if (!sqlite) return send(res, 503, { error: 'database unavailable' });
       return send(res, 200, { ok: true, workspace: { id: wsId } }, { 'Set-Cookie': sessionCookie(token, SESSION_TTL_MS / 1000) });
     }
 
-    /* POST /api/auth/logout */
+    /* POST /api/auth/logout — always 200 + always clear the cookie. The old
+     * code only cleared it when a valid session was still found, so logging in
+     * from another device (or any stale/foreign cookie) left our cookie live;
+     * combined with opportunistic server-side session GC that is exactly how a
+     * user ends up "signed out" while their next login reads a dead row. */
     if (routeKey === 'logout' && method === 'POST') {
-      if (ctx) destroySession(ctx.token);
+      const tok = parseCookies(req)[COOKIE_NAME];
+      if (tok) destroySession(tok);
       return send(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie('deleted', 0) });
     }
 
@@ -1097,8 +1149,8 @@ async function handleApi(req, res, url) {
         const upd = {};
         if (typeof b.name === 'string' && cleanStr(b.name, 80).length >= 2) upd.name = cleanStr(b.name, 80);
         if (typeof b.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(b.color)) upd.color = b.color;
-        if (typeof b.email === 'string' && EMAIL_RE.test(cleanStr(b.email.toLowerCase(), 254))) {
-          const em = cleanStr(b.email.toLowerCase(), 254);
+        if (typeof b.email === 'string' && EMAIL_RE.test(normalizeEmail(b.email))) {
+          const em = normalizeEmail(b.email);
           if (sqlite.prepare('SELECT id FROM users WHERE email=? AND id<>?').get(em, target.id)) {
             return send(res, 409, { error: 'That email is already registered' });
           }
