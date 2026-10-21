@@ -375,7 +375,15 @@ function createUser({ name, email, password, color, isDemo }) {
 function createWorkspace(name, kind, ownerId) {
   const info = sqlite.prepare('INSERT INTO workspaces (name,kind,owner_id,created_at) VALUES (?,?,?,?)')
     .run(name, kind, ownerId, new Date().toISOString());
-  return info.lastInsertRowid;
+  const wsId = info.lastInsertRowid;
+  /* Every workspace gets the standard channel list up front. Without this,
+   * personal workspaces had zero rows in `channels`, so POST/GET
+   * /api/channels/:id answered 404 "channel not found" and the chat UI was
+   * dead for every non-demo account. */
+  SEED_CHANNELS.forEach(([cid, topic], i) => {
+    sqlite.prepare('INSERT OR IGNORE INTO channels (id,workspace_id,topic,ord) VALUES (?,?,?,?)').run(cid, wsId, topic, i);
+  });
+  return wsId;
 }
 function addMembership(wsId, userId, role) {
   sqlite.prepare('INSERT INTO memberships (workspace_id,user_id,role) VALUES (?,?,?) ON CONFLICT(workspace_id,user_id) DO UPDATE SET role=excluded.role')
@@ -958,8 +966,12 @@ async function handleApi(req, res, url) {
    * the auth block, recursing until the stack overflows (crashing the whole
    * process). Delegate straight to the canonical handler instead. */
   if ((seg === 'login' || seg === 'logout') && !sqlite) return send(res, 503, { error: 'database unavailable' });
-  if (seg === 'login'  && method === 'POST') return authHandler(req, res, ctx, 'login',  parts.slice(1).join('/'));
-  if (seg === 'logout' && method === 'POST') return authHandler(req, res, ctx, 'logout', parts.slice(1).join('/'));
+  /* authHandler signature is (req, res, ctx, routeKey, method) — pass the HTTP
+   * method as the 5th argument, NOT a path fragment (previously parts.slice(1)
+   * landed in `method`, so 'login' !== undefined and every legacy call fell
+   * through to the 404 "unknown auth endpoint"). */
+  if (seg === 'login'  && method === 'POST') return authHandler(req, res, ctx, 'login',  method);
+  if (seg === 'logout' && method === 'POST') return authHandler(req, res, ctx, 'logout', method);
   if (seg === 'session' && method === 'GET') {
     return send(res, 200, ctx ? { user: publicUser(ctx.user) } : { user: null });
   }
@@ -1200,8 +1212,15 @@ async function handleApi(req, res, url) {
         list = list.filter(t => t.name.toLowerCase().includes(q) || t.id.toLowerCase().includes(q));
       }
       if (url.searchParams.has('limit') || url.searchParams.has('offset')) {
-        const limit  = Math.min(500, Math.max(1, Number(url.searchParams.get('limit'))  || 25));
-        const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+        const rawLimit = url.searchParams.get('limit');
+        const rawOffset = url.searchParams.get('offset');
+        // Reject non-numeric / negative values instead of silently coercing them.
+        if ((rawLimit !== null && !/^\d+$/.test(rawLimit)) ||
+            (rawOffset !== null && !/^\d+$/.test(rawOffset))) {
+          return send(res, 400, { error: 'limit and offset must be non-negative integers' });
+        }
+        const limit  = Math.min(500, Math.max(1, Number(rawLimit)  || 25));
+        const offset = Math.max(0, Number(rawOffset) || 0);
         return send(res, 200, { total: list.length, limit, offset, items: list.slice(offset, offset + limit) });
       }
       return send(res, 200, list);

@@ -3,7 +3,11 @@
 # Covers: signup validation, duplicate email, generic login failure, httpOnly
 # session cookie, session persistence after refresh, logout invalidation,
 # rate limiting (429), protected routes without auth, and two-user data isolation.
-PORT="${TH_PORT:-3000}"
+DATA_DIR="${TASKHIVE_DATA_DIR:-$(cd "$(dirname "$0")" && pwd)/data}"
+# Use a dedicated port by default so a foreign server on 3000 can never be
+# adopted (its bypass flags / data dir are unknown, which made shared-host
+# runs fail spuriously). Override with TH_PORT if needed.
+PORT="${TH_PORT:-3179}"
 B=http://localhost:$PORT/api
 JAR=/tmp/taskhive_test_cookies.txt
 rm -f $JAR
@@ -11,11 +15,11 @@ PASS=0; FAIL=0
 
 # ---- self-managed server lifecycle ----------------------------------------
 # The suite restarts the server mid-run (to exercise the real rate limiter),
-# so it owns its own server process. Start one if nothing is listening yet,
-# and always clean up our own child processes on exit. NEVER use a broad
+# so it ALWAYS owns its own server process on $PORT with a known data dir and
+# bypass flags. It never adopts an already-running foreign server — that made
+# results depend on whoever happened to occupy the port. NEVER use a broad
 # pkill pattern — it can match this very script's command line and kill the
 # test run itself.
-DATA_DIR="${TASKHIVE_DATA_DIR:-$(cd "$(dirname "$0")" && pwd)/data}"
 SRV_PIDS=""
 start_server() { # start_server <logfile> [bypass=1]
   local log="$1" bypass="${2:-}"
@@ -46,10 +50,12 @@ wait_healthy() { # wait until /api/health answers (up to ~8s)
   return 1
 }
 restart_server() { stop_servers; sleep 0.3; wait_healthy || true; }
-if ! curl -s -o /dev/null "http://localhost:$PORT/api/health"; then
-  echo "(starting TaskHive server on :$PORT, data dir $DATA_DIR)"
-  start_server /tmp/th_server.log 1
+if curl -s -o /dev/null "http://localhost:$PORT/api/health"; then
+  echo "ERROR: something is already listening on :$PORT — set TH_PORT to a free port" >&2
+  exit 1
 fi
+echo "(starting TaskHive server on :$PORT, data dir $DATA_DIR)"
+start_server /tmp/th_server.log 1
 trap 'stop_servers' EXIT
 chk() { # chk <desc> <expected> <actual>
   if [ "$2" = "$3" ]; then PASS=$((PASS+1)); echo "ok   $1";
@@ -209,10 +215,10 @@ echo "== unknown endpoint (expect 404) =="
 chk "404 unknown" 404 "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' $B/nope)"
 
 echo "== static index (expect 200 html) =="
-chk "200 index" 200 "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:/index.html)"
+chk "200 index" 200 "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:$PORT/index.html)"
 
 echo "== path traversal (expect non-200) =="
-CODE=$(curl -s -o /dev/null -w '%{http_code}' --path-as-is "http://localhost:/../etc/passwd")
+CODE=$(curl -s -o /dev/null -w '%{http_code}' --path-as-is "http://localhost:$PORT/../etc/passwd")
 if [ "$CODE" != "200" ]; then PASS=$((PASS+1)); echo "ok   traversal blocked ($CODE)"; else FAIL=$((FAIL+1)); echo "FAIL traversal allowed"; fi
 
 echo "== export snapshot (expect 200 + attachment header + valid JSON) =="
