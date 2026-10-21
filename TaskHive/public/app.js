@@ -277,8 +277,8 @@ function toolbarHtml() {
     <select id="flt-urgency" class="tool-select" aria-label="Filter by urgency">
       <option value="">All urgency</option>${Object.keys(URGENCY).map(k => `<option ${filterState.urgency === k ? 'selected' : ''}>${k}</option>`).join('')}
     </select>
-    <select id="flt-assignee" class="tool-select" aria-label="Filter by owner">
-      <option value="">All owners</option>${PEOPLE.map(p => `<option value="${p.id}" ${String(filterState.assignee) === p.id ? 'selected' : ''}>${p.name}</option>`).join('')}
+    <select id="flt-assignee" class="tool-select" data-assignee-filter aria-label="Filter by owner">
+      <option value="">All owners</option>${PEOPLE.map(p => `<option value="${esc(p.id)}" ${String(filterState.assignee) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
     </select>
     ${active ? '<button id="clear-filters" class="btn btn-ghost btn-sm">Clear filters ✕</button>' : ''}
     <span class="toolbar-spacer"></span>
@@ -658,7 +658,11 @@ function propertiesPanelHtml(task) {
           ${Object.keys(PROGRESS).map(k => `<option ${k === task.progress ? 'selected' : ''}>${k}</option>`).join('')}
         </select></dd></div>
       <div class="prop-row"><dt>Category</dt><dd>${m.category}</dd></div>
-      <div class="prop-row"><dt>Task owner</dt><dd><button class="avatar avatar-xs link-avatar" style="--a:${owner.color}" data-person="${task.assignee}">${owner.initials[0]}</button>${owner.name.split(' ')[0]}</dd></div>
+      <div class="prop-row"><dt>Task owner</dt><dd><button class="avatar avatar-xs link-avatar" style="--a:${owner.color}" data-person="${task.assignee}">${owner.initials[0]}</button>${esc(owner.name.split(' ')[0])}</dd></div>
+      ${canManagePeople() ? `<div class="prop-row"><dt>Reassign</dt><dd>
+        <select id="prop-assignee" data-idx="${task.idx}" class="prop-select" data-assignee-select aria-label="Reassign task">
+          ${assigneeOptionsHtml(task.assignee == null ? '' : String(task.assignee))}
+        </select></dd></div>` : ''}
       <div class="prop-row"><dt>Urgency</dt><dd><span class="pill ${URGENCY[task.urgency]}">${task.urgency}</span></dd></div>
       <div class="prop-row"><dt>Department</dt><dd>${m.department}</dd></div>
       <div class="prop-row"><dt>Date added</dt><dd>${m.added}</dd></div>
@@ -1556,6 +1560,13 @@ routes.settings = () => {
         <a class="btn btn-ghost btn-sm" href="#/home">← Back to workspace</a>
       </div>
 
+      <!-- People (workspace members + pending invites; content injected by renderPeopleList) -->
+      <div class="settings-group st-people">
+        <h3>👥 People</h3>
+        <p class="st-desc">Members and pending invitations for this workspace. Removing a person unassigns their tasks but never deletes them.</p>
+        <div id="people-list"><p class="muted people-note">Loading people…</p></div>
+      </div>
+
       <!-- Profile hero card -->
       <div class="settings-group st-hero">
         <div class="st-hero-top">
@@ -1701,10 +1712,21 @@ function assigneeOptionsHtml(current) {
 }
 
 /* Re-render ONLY the assignee selects that are currently open, so adding or
-   removing a person updates the New task dialog / task panel live. */
+   removing a person updates the New task dialog / task panel live. A select
+   whose current value vanished (person removed) falls back to "Unassigned". */
 function refreshAssigneeSelects() {
   document.querySelectorAll('select[data-assignee-select]').forEach(sel => {
-    sel.innerHTML = assigneeOptionsHtml(sel.value);
+    const cur = sel.value;
+    sel.innerHTML = assigneeOptionsHtml(cur);
+    if (cur && !sel.querySelector(`option[value="${CSS.escape ? CSS.escape(cur) : cur}"]`)) {
+      sel.value = '';                       // removed person → Unassigned
+    }
+  });
+  /* Owner filter in the board toolbar: rebuild from PEOPLE, keep "All owners". */
+  document.querySelectorAll('select[data-assignee-filter]').forEach(sel => {
+    const cur = String(filterState.assignee);
+    sel.innerHTML = `<option value="">All owners</option>` + PEOPLE.map(p =>
+      `<option value="${esc(p.id)}"${cur === String(p.id) ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
   });
 }
 
@@ -1842,6 +1864,46 @@ document.body.addEventListener('click', (e) => {
 
   // Roadmap quarter filter chips
   if (el.dataset.rmf) { rmFilter = el.dataset.rmf; render(); return; }
+
+  /* ---- People list (Settings): open modal / remove person — delegated so it
+     survives the async re-render of #people-list. ---- */
+  const addP = e.target.closest('[data-new="person-open"]');
+  if (addP) { if (!canManagePeople()) return toast('🔒 Only workspace admins can add people'); return showAddPersonModal(); }
+  const rmP = e.target.closest('[data-rmperson]');
+  if (rmP) {
+    const pid = rmP.dataset.rmperson;
+    const p = PEOPLE.find(x => String(x.id) === String(pid));
+    if (!p) return;
+    if (!canManagePeople()) return toast('🔒 Only workspace admins can remove people');
+    if (String(pid) === String(ME)) return toast('You cannot remove yourself');
+    const name = esc(p.name);
+    openModal('Remove person', `
+      <p class="modal-lead">Remove <strong>${name}</strong> from this workspace?</p>
+      <p class="muted">Their tasks will be set to <em>Unassigned</em> — no tasks are deleted${personStatus(p) === 'invited' ? ', and their pending invitation is cancelled' : ''}.</p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" data-close>Cancel</button>
+        <button class="btn btn-danger" id="confirm-rm-person" data-rmperson-confirm="${esc(pid)}">Remove</button>
+      </div>`);
+    return;
+  }
+  const rmOk = e.target.closest('#confirm-rm-person');
+  if (rmOk) {
+    const pid = rmOk.dataset.rmpersonConfirm;
+    rmOk.disabled = true; rmOk.textContent = 'Working…';
+    api('DELETE', `/members/${encodeURIComponent(pid)}`)
+      .then(() => {
+        PEOPLE = PEOPLE.filter(x => String(x.id) !== String(pid));
+        let touched = false;
+        TASKS.forEach(t => {                            // server already unassigned; mirror locally
+          if (String(t.assignee || '') === String(pid)) { t.assignee = ''; touched = true; }
+        });
+        closeModal(); loadMembers(); render(); refreshAssigneeSelects();
+        toast(`✔ ${pNameFor(pid)} removed — their tasks are now unassigned`);
+        if (touched && currentRoute === 'task') render();
+      })
+      .catch(err => { rmOk.disabled = false; rmOk.textContent = 'Remove'; toast(`⚠ ${err.message}`); });
+    return;
+  }
 
   // My Tasks status pills (must run before the generic closest() id lookup)
   const pill = e.target.closest('.mt-pill');
@@ -2103,6 +2165,20 @@ document.body.addEventListener('change', (e) => {
       showUndoToast(`Status → ${t.progress}`);
       undoStack.push({ label: `Status change`, run: () => { t.progress = old; patchTask(t, { progress: old }); render(); } });
     }
+  }
+  /* Task details panel → Reassign (admins only; lists members + pending invites) */
+  if (e.target.id === 'prop-assignee') {
+    const idx = +e.target.dataset.idx;
+    const t = TASKS.find(x => x.idx === idx);
+    if (!t) return;
+    const old = t.assignee == null ? '' : String(t.assignee);
+    const nv = e.target.value;
+    if (nv === old) return;
+    t.assignee = nv;                          // "" = Unassigned (server stores NULL)
+    patchTask(t, { assignee: nv }, 'Reassign not saved');
+    if ($('#board-body')) renderBoardBody(); else render();
+    toast(nv ? `👤 Reassigned to ${personById(nv).name}` : 'Task unassigned');
+    undoStack.push({ label: 'Reassignment', run: () => { t.assignee = old; patchTask(t, { assignee: old }); render(); } });
   }
 });
 
@@ -2579,6 +2655,15 @@ async function loadBootstrap() {
     if (d.user) {
       ME = d.user.id;                                       // session restored via cookie → /api/auth/me path
       WS = d.workspace || null;
+      /* Hydrate server-persisted channels so custom channels survive reloads.
+         Bootstrap only ships the user's own workspace rows, so it is safe to
+         drop the static fallback entries that aren't on the server anymore. */
+      if (d.channels && typeof d.channels === 'object') {
+        CHANNELS = {};
+        for (const [key, meta] of Object.entries(d.channels)) {
+          CHANNELS[key] = { topic: (meta && meta.topic) || '' };
+        }
+      }
       try { localStorage.setItem('th_session_hint', '1'); } catch (_) {}
       hideLoginScreen();
     } else {

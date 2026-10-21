@@ -901,8 +901,10 @@ function bootstrapPayload(ctx) {
   const messages = {};
   const discussions = {};
   const channels = [];
+  const channelMeta = {};   /* { id: { topic } } so the client can hydrate its CHANNELS map */
   for (const ch of wsStmt.channelsAll().all(ctx.workspace.id)) {
     channels.push(ch.id);
+    channelMeta[ch.id] = { topic: ch.topic || '' };
     messages[ch.id] = wsStmt.msgsByChannel().all(ctx.workspace.id, ch.id).map(m => {
       const actor = byKey[m.actor_key] || { name: 'Someone', initials: '?', color: '#888' };
       return { by: m.actor_key, who: actor.name, initials: actor.initials, color: actor.color, text: m.text, time: m.time };
@@ -921,7 +923,7 @@ function bootstrapPayload(ctx) {
                  role: ctx.membership.role, readOnly: ctx.workspace.kind === 'demo',
                  createdAt: ctx.workspace.created_at },
     people, projects: projects.map(p => ({ ...p, open: tasks.filter(t => t.project === p.id && t.progress !== 'Completed').length })),
-    tasks, inbox, discussions, messages, channels,
+    tasks, inbox, discussions, messages, channels: channelMeta,
     savedIds: prefs.savedIds, readFlags: prefs.readFlags, ui: prefs.ui,
   };
 }
