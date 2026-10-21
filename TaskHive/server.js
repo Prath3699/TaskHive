@@ -128,12 +128,12 @@ const SEED_PEOPLE = [
   { key: 'p5', name: 'Sara Noor',    email: 'sara@catlas.inc',  color: '#db672d' },
 ];
 const SEED_PROJECTS = [
-  { id: 'q3-plan',         name: 'Q3 Plan',            desc: 'Product roadmap & delivery plan for Q3' },
-  { id: 'website-redesign', name: 'Website Redesign',  desc: 'New marketing site and design system' },
-  { id: 'mobile-app-v2',   name: 'Mobile App v2.0',    desc: 'Feature parity with web + offline mode' },
-  { id: 'api-docs',        name: 'API Documentation',  desc: 'Public developer docs refresh' },
-  { id: 'customer-portal', name: 'Customer Portal',    desc: 'Self-service dashboard for clients' },
-  { id: 'internal-tools',  name: 'Internal Tools',     desc: 'Admin utilities and ops automation' },
+  { id: 'q3-plan',         name: 'Q3 Plan',            desc: 'Product roadmap & delivery plan for Q3', color: '#7b60ff' },
+  { id: 'website-redesign', name: 'Website Redesign',  desc: 'New marketing site and design system',   color: '#43b3ff' },
+  { id: 'mobile-app-v2',   name: 'Mobile App v2.0',    desc: 'Feature parity with web + offline mode', color: '#3eb957' },
+  { id: 'api-docs',        name: 'API Documentation',  desc: 'Public developer docs refresh',          color: '#ffa575' },
+  { id: 'customer-portal', name: 'Customer Portal',    desc: 'Self-service dashboard for clients',     color: '#db672d' },
+  { id: 'internal-tools',  name: 'Internal Tools',     desc: 'Admin utilities and ops automation',     color: '#38bdf8' },
 ];
 const SEED_TASKS = [
   ['TSK-8',  'Improve Navigation & Menu Organization', 'Ongoing',   'Moderate', 'p3', 0, 'q3-plan', 0],
@@ -250,6 +250,7 @@ function initSchema() {
     descr TEXT NOT NULL DEFAULT '',
     members TEXT NOT NULL DEFAULT '[]',
     idx INTEGER NOT NULL DEFAULT 0,
+    color TEXT NOT NULL DEFAULT '#7c8cff',
     PRIMARY KEY (workspace_id, id)
   );
   CREATE TABLE IF NOT EXISTS tasks (
@@ -323,7 +324,10 @@ function initSchema() {
    * fresh and existing databases; harmless if the column already exists. */
   try {
     const cols = sqlite.prepare("PRAGMA table_info(projects)").all().map(c => c.name);
-    if (!cols.includes('color')) sqlite.exec("ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT ''");
+    /* Fresh DBs already have the column with its DEFAULT from CREATE TABLE;
+     * existing DBs get it added here. ALTER ... ADD COLUMN with a non-NULL
+     * default backfills every existing row automatically. */
+    if (!cols.includes('color')) sqlite.exec("ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT '#7c8cff'");
   } catch (_) {}
 const row = sqlite.prepare('SELECT v FROM meta WHERE k=?').get('schema_version');
   if (!row) sqlite.prepare('INSERT INTO meta (k,v) VALUES (?,?)').run('schema_version', String(SCHEMA_VERSION));
@@ -354,9 +358,9 @@ const wsStmt = {
   projectsAll:   () => sqlite.prepare('SELECT * FROM projects WHERE workspace_id=? ORDER BY idx'),
   projectById:   () => sqlite.prepare('SELECT * FROM projects WHERE workspace_id=? AND id=?'),
   projectUpsert: () => sqlite.prepare(`INSERT INTO projects (id,workspace_id,name,descr,members,idx,color)
-      VALUES (@id,@workspace_id,@name,@descr,@members,@idx,COALESCE(@color,''))
+      VALUES (@id,@workspace_id,@name,@descr,@members,@idx,COALESCE(@color,'#7c8cff'))
       ON CONFLICT(workspace_id,id) DO UPDATE SET name=@name,descr=@descr,members=@members,idx=@idx,
-        color=COALESCE(@color,color)`),
+        color=COALESCE(@color,projects.color)`),
   projectDelete: () => sqlite.prepare('DELETE FROM projects WHERE workspace_id=? AND id=?'),
   inboxAll:      () => sqlite.prepare('SELECT * FROM inbox_items WHERE workspace_id=? ORDER BY ord'),
   inboxById:     () => sqlite.prepare('SELECT * FROM inbox_items WHERE workspace_id=? AND id=?'),
@@ -448,7 +452,7 @@ function insertDemoContent(wsId, personKeys) {
                                                 : SEED_PEOPLE.map(p => pk(p.key)).filter(Boolean);
   for (const pr of SEED_PROJECTS) {
     const members = pr.id === 'internal-tools' && !ownerOnly ? [pk('p4')] : memberList('p1');
-    wsStmt.projectUpsert().run({ id: pr.id, workspace_id: wsId, name: pr.name, descr: pr.desc, members: JSON.stringify(members), idx: SEED_PROJECTS.indexOf(pr) });
+    wsStmt.projectUpsert().run({ id: pr.id, workspace_id: wsId, name: pr.name, descr: pr.desc, members: JSON.stringify(members), idx: SEED_PROJECTS.indexOf(pr), color: pr.color || '#7c8cff' });
   }
   /* 17 design-mockup tasks + 2 per extra project so boards aren't dead ends */
   const rows = SEED_TASKS.map(([id, name, progress, urgency, assignee, comments, project, idx]) =>
@@ -579,7 +583,7 @@ function migrateLegacyDoc(d) {
   const projIds = new Set((d.projects || []).map(p => p.id));
   for (const pr of (d.projects || [])) {
     wsStmt.projectUpsert().run({ id: pr.id, workspace_id: wsId, name: pr.name, descr: pr.desc || '',
-      members: JSON.stringify((pr.members || []).map(m => String(personKeys[m] ?? m))), idx: (d.projects || []).indexOf(pr) });
+      members: JSON.stringify((pr.members || []).map(m => String(personKeys[m] ?? m))), idx: (d.projects || []).indexOf(pr), color: pr.color || '#7c8cff' });
   }
   let ord = 0;
   for (const t of (d.tasks || [])) {
@@ -809,7 +813,14 @@ function sanitizeTask(input, existing = {}, ctx = null) {
   if (input.assignee !== undefined) {
     const a = cleanStr(String(input.assignee ?? ''), 40);
     if (!a) { t.assignee = null; }               /* "Unassigned" is a valid choice */
-    else if (ctx) {
+    else if (/^inv-/.test(a)) {
+      /* Pending invites are assignable right away; they show as "Invited"
+       * avatars until the person signs up with that email. */
+      const invOk = sqlite.prepare('SELECT 1 AS x FROM invited_members WHERE workspace_id=? AND id=? AND user_id IS NULL')
+        .get(ctx.workspace.id, Number(a.slice(4)));
+      if (!invOk) throw new Error(`assignee not in your workspace`);
+      t.assignee = a;
+    } else if (ctx) {
       const ok = sqlite.prepare('SELECT 1 AS x FROM memberships WHERE workspace_id=? AND user_id=?').get(ctx.workspace.id, Number(a));
       if (!ok) throw new Error(`assignee not in your workspace`);
       t.assignee = a;
@@ -1149,7 +1160,8 @@ async function handleApi(req, res, url) {
       const mapKey = (k) => k == null ? null : (peopleKeys[String(k)] ?? String(k));
       (incoming.projects || []).forEach((pr, i) => {
         wsStmt.projectUpsert().run({ id: pr.id, workspace_id: wsId, name: cleanStr(pr.name, 120), descr: cleanStr(pr.desc, 500),
-          members: JSON.stringify((pr.members || []).map(mapKey)), idx: i });
+          members: JSON.stringify((pr.members || []).map(mapKey)), idx: i,
+          color: /^#[0-9a-fA-F]{6}$/.test(String(pr.color || '')) ? String(pr.color) : '#7c8cff' });
       });
       (incoming.tasks || []).forEach((t, i) => {
         wsStmt.taskUpsert().run({ id: t.id, workspace_id: wsId, idx: t.idx ?? (1000 + i), name: cleanStr(t.name, 200),
@@ -1329,9 +1341,12 @@ async function handleApi(req, res, url) {
       if (ctx.membership.role !== 'admin') return send(res, 403, { error: 'only workspace admins can remove people' });
       if (readOnly) return denyReadOnly();
       if (String(param).startsWith('inv-')) {
-        const info = sqlite.prepare('DELETE FROM invited_members WHERE workspace_id=? AND id=? AND user_id IS NULL').run(wsId, Number(param.slice(4)));
+        const invNum = Number(param.slice(4));
+        const info = sqlite.prepare('DELETE FROM invited_members WHERE workspace_id=? AND id=? AND user_id IS NULL').run(wsId, invNum);
         if (!info.changes) return send(res, 404, { error: 'invitation not found' });
-        return send(res, 200, { deleted: true, id: param });
+        /* Removing an invite unassigns their tasks but never deletes them. */
+        sqlite.prepare('UPDATE tasks SET assignee = NULL WHERE workspace_id=? AND assignee=?').run(wsId, 'inv-' + invNum);
+        return send(res, 200, { deleted: true, id: param, unassignedTasks: true });
       }
       const uid = Number(param);
       if (!uid) return send(res, 400, { error: 'invalid member id' });
@@ -1364,7 +1379,7 @@ async function handleApi(req, res, url) {
       const name = cleanStr(b.name, 120);
       if (!name) return send(res, 400, { error: 'name is required' });
       const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + crypto.randomBytes(2).toString('hex');
-      const color = /^#[0-9a-fA-F]{6}$/.test(String(b.color || '')) ? String(b.color) : '';
+      const color = /^#[0-9a-fA-F]{6}$/.test(String(b.color || '')) ? String(b.color) : '#7c8cff';
       const proj = { id, name, desc: cleanStr(b.desc, 500), members: [String(ctx.user.id)],
                      idx: wsStmt.projectsAll().all(wsId).length, color };
       wsStmt.projectUpsert().run({ id, workspace_id: wsId, name: proj.name, descr: proj.desc, members: JSON.stringify(proj.members), idx: proj.idx, color });
