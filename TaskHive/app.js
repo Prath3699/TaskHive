@@ -46,6 +46,59 @@ let CHANNELS = {
   marketing:      { topic: 'Campaigns, launches and growth experiments.' },
 };
 const channelName = (key) => key.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+/* Hydrate the sidebar CHANNELS map from GET /api/bootstrap -> channels[].
+   Server data wins over the static fallback so created channels persist
+   across reloads; the demo seed list is kept only for ids the server omits. */
+function hydrateChannels(list) {
+  if (!Array.isArray(list)) return;
+  const next = {};
+  for (const ch of list) {
+    if (!ch || typeof ch !== 'string') continue;
+    next[ch] = { topic: (CHANNELS[ch] && CHANNELS[ch].topic) || '' };
+  }
+  /* keep demo fallback entries that the server still knows about, in order */
+  CHANNELS = Object.keys(next).length ? next : CHANNELS;
+}
+/* ---- workspace people / members state ---- */
+let WS_MEMBERS = [];            // GET /api/members rows: {id,name,email,role,status,...}
+const isAdmin = () => !!(WS && WS.role === 'admin');
+async function loadMembers() {
+  try {
+    WS_MEMBERS = await api('GET', '/members');
+  } catch (err) {
+    WS_MEMBERS = PEOPLE.map(p => ({ ...p, status: p.invited ? 'invited' : 'active', role: 'member' }));
+  }
+  updatePersonMenuItem();
+  const host = document.getElementById('people-list');
+  if (host) host.innerHTML = peopleListHtml();
+}
+/* Show the "Add person" menu item only for workspace admins. */
+function updatePersonMenuItem() {
+  const btn = document.querySelector('#new-split-menu [data-new="person"]');
+  if (btn) btn.hidden = !isAdmin();
+}
+/* Settings → People list: name, email, role and Active/Invited status.
+   Rendered from WS_MEMBERS (GET /api/members); admins can remove people. */
+function peopleListHtml() {
+  const rows = (WS_MEMBERS.length ? WS_MEMBERS : PEOPLE.map(p => ({ ...p, status: p.invited ? 'invited' : 'active', role: 'member' })));
+  if (!rows.length) return '<p class="muted">No people loaded yet.</p>';
+  const admin = isAdmin();
+  return `
+    <table class="people-table">
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th>${admin ? '<th></th>' : ''}</tr></thead>
+      <tbody>
+        ${rows.map(p => `
+        <tr>
+          <td><span class="avatar avatar-xs" style="--a:${esc(p.color || '#888')}">${esc(p.initials || '?')}</span> ${esc(p.name)}</td>
+          <td class="pp-email">${esc(p.email || '—')}</td>
+          <td>${esc(p.role === 'admin' ? 'Admin' : 'Member')}</td>
+          <td><span class="pp-status ${p.status === 'invited' ? 'pp-invited' : 'pp-active'}">${p.status === 'invited' ? 'Invited' : 'Active'}</span></td>
+          ${admin ? `<td>${String(p.id) !== String(ME) ? `<button class="btn btn-ghost danger btn-sm" data-remove-person="${esc(p.id)}">Remove</button>` : ''}</td>` : ''}
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    ${admin ? '<p class="st-hint">Removing a person unassigns their tasks — the tasks themselves are kept.</p>' : '<p class="st-hint">Only workspace admins can add or remove people.</p>'}`;
+}
 /* Re-render the sidebar "Your channels" group from the live CHANNELS map so
    newly created channels appear immediately without a page reload. */
 function renderChannelNav() {
@@ -1749,7 +1802,20 @@ document.body.addEventListener('click', (e) => {
   if (thBtn) { openColMenu(thBtn); return; }
   if (document.querySelector('.col-menu')) closeColMenus(); // click outside → dismiss
 
-  const el = e.target.closest('[id],[data-goto],[data-calday],[data-project],[data-inbox],[data-attachment],[data-person],[data-plan],[data-view],[data-export],[data-status],[data-mtview],[data-mtchip],[data-del],[data-rmf]');
+  /* Split-button menu items: handled BEFORE the generic closest('[id],…')
+     lookup so a [data-new] click is never swallowed by an ancestor with an
+     id. Delegation on document.body means this survives topbar re-renders
+     and route changes without re-attaching any listeners. */
+  const newItem = e.target.closest('#new-split-menu [data-new]');
+  if (newItem) {
+    closeSplitMenu(true);   // returns focus to the caret button, then opens the dialog
+    if (newItem.dataset.new === 'task') return showNewFeatureModal();
+    if (newItem.dataset.new === 'project') return showNewProjectModal();
+    if (newItem.dataset.new === 'channel') return showNewChannelModal();
+    if (newItem.dataset.new === 'person') return isAdmin() ? showAddPersonModal() : toast('Only workspace admins can add people');
+  }
+
+  const el = e.target.closest('[id],[data-goto],[data-calday],[data-project],[data-inbox],[data-attachment],[data-person],[data-plan],[data-view],[data-export],[data-status],[data-mtview],[data-mtchip],[data-del],[data-rmf],[data-remove-person]');
   if (!el) return;
 
   // Roadmap quarter filter chips
@@ -1774,13 +1840,6 @@ document.body.addEventListener('click', (e) => {
   if (el.id === 'upgrade-btn') return showUpgradeModal();
   if (el.id === 'new-task-btn' || el.classList.contains('new-task-empty')) return showNewFeatureModal();
   if (el.id === 'new-fab') { e.preventDefault(); return showNewFeatureModal(); }
-  if (el.dataset.new !== undefined && el.closest('#new-split-menu')) {
-    closeSplitMenu();
-    if (el.dataset.new === 'task') return showNewFeatureModal();
-    if (el.dataset.new === 'project') return showNewProjectModal();
-    if (el.dataset.new === 'channel') return showNewChannelModal();
-    if (el.dataset.new === 'person') return showAddPersonModal();
-  }
   if (el.dataset.plan) { closeModal(); return toast(`🎉 ${el.dataset.plan} plan selected (demo)`); }
   if (el.id === 'copy-link') {
     const inp = $('#share-link');
@@ -1840,6 +1899,35 @@ document.body.addEventListener('click', (e) => {
         `<li><span class="status-dot ${PROGRESS[t.progress].dot}"></span><a href="#/task/${t.idx}">${esc(t.name)}</a></li>`).join('')}</ul>`);
   }
   if (el.dataset.attachment) { e.preventDefault(); return toast(`⬇ Downloading ${el.dataset.attachment}… (demo)`); }
+
+  /* ---- Settings → People: remove a member (admins only; server enforces too) ---- */
+  if (el.dataset.removePerson !== undefined) {
+    const id = el.dataset.removePerson;
+    const p = WS_MEMBERS.find(x => String(x.id) === String(id)) || personById(id);
+    return openModal('Remove person?', `
+      <p class="modal-lead">${esc(p.name || id)} will be removed from this workspace. Their tasks stay on the board but become <strong>Unassigned</strong>.</p>
+      <div class="settings-actions">
+        <button id="confirm-remove-person" data-rpid="${esc(id)}" class="btn btn-primary danger">Remove</button>
+        <button id="cancel-remove-person" class="btn btn-ghost">Cancel</button>
+      </div>`);
+  }
+  if (el.id === 'cancel-remove-person') { closeModal(); return; }
+  if (el.id === 'confirm-remove-person') {
+    const btn = document.getElementById('confirm-remove-person');
+    if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
+    api('DELETE', `/members/${encodeURIComponent(el.dataset.rpid)}`).then(() => {
+      const rid = el.dataset.rpid;
+      TASKS.forEach(t => { if (String(t.assignee) === String(rid)) t.assignee = ''; });
+      PEOPLE = PEOPLE.filter(x => String(x.id) !== String(rid));
+      WS_MEMBERS = WS_MEMBERS.filter(x => String(x.id) !== String(rid));
+      closeModal(); render(); loadMembers();
+      toast('✔ Person removed — their tasks are now unassigned');
+    }).catch(err => {
+      if (btn) { btn.disabled = false; btn.textContent = 'Remove'; }
+      toast(`⚠ ${err.message}`);
+    });
+    return;
+  }
 
   if (el.id === 'save-toggle') {
     const t = byIdx(+(el.dataset.idx ?? 0));
