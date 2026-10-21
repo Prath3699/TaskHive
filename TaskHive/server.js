@@ -478,21 +478,23 @@ function insertDemoContent(wsId, personKeys) {
   for (const [iid, whoKey, text, agoMs, task] of SEED_INBOX) {
     wsStmt.inboxInsert().run(iid, wsId, pk(whoKey), text, task, new Date(now - agoMs).toISOString(), SEED_INBOX.findIndex(x => x[0] === iid));
   }
-  /* INSERT OR IGNORE everywhere: createWorkspace() already seeds the standard
-   * channel list for every workspace, so a plain INSERT here collided with
-   * those rows → SQLITE_CONSTRAINT UNIQUE(workspace_id, id) at startup. The
-   * seed ids are fixed constants reused per workspace (not generated unique);
-   * the fix is to tolerate the pre-existing rows instead of double-inserting.
-   * Messages get the same guard: only insert when the channel has none yet. */
+  /* Channels: createWorkspace() already inserts the standard channel list for
+   * EVERY new workspace, so these rows legitimately exist before this point —
+   * INSERT OR IGNORE is genuinely correct here (it updates nothing and hides no
+   * bug; the ignore branch can only fire against our own prior insert).
+   * Messages have NO natural key, so they get an explicit "seed once" guard via
+   * meta instead of blanket-ignoring duplicates on every re-seed. */
   SEED_CHANNELS.forEach(([cid, topic], i) => {
     wsStmt.channelInsert().run(cid, wsId, topic, i);
-    const msgCount = sqlite.prepare('SELECT COUNT(*) AS n FROM channel_messages WHERE workspace_id=? AND channel=?').get(wsId, cid).n;
-    if (msgCount === 0) {
-      for (const [whoKey, text, time] of (SEED_MESSAGES[cid] || [])) {
+  });
+  if (!sqlite.prepare('SELECT 1 AS x FROM meta WHERE k=?').get('seeded_msgs_' + wsId)) {
+    for (const [cid, msgs] of Object.entries(SEED_MESSAGES)) {
+      for (const [whoKey, text, time] of msgs) {
         wsStmt.msgInsert().run(wsId, cid, pk(whoKey), text, time);
       }
     }
-  });
+    setMeta('seeded_msgs_' + wsId, '1');
+  }
 }
 
 /* A brand-new signup gets an empty personal workspace — except the first
@@ -628,17 +630,48 @@ const memSessions = new Map();          // fallback when no SQLite (Netlify)
 
 function hashToken(tok) { return crypto.createHash('sha256').update(tok).digest('hex'); }
 
-function createSession(userId, workspaceId) {
+/* Optional `replaceHash`: when given, the INSERT and the DELETE of the old
+ * row run inside the caller's open transaction. The demo-reset flow needs
+ * this — sessions.workspace_id has no ON DELETE action, so deleting the old
+ * demo workspace while the caller's live session still points at it fails
+ * with FOREIGN KEY constraint failed. */
+function createSession(userId, workspaceId, replaceHash) {
   const token = crypto.randomBytes(24).toString('hex');
   const expires = Date.now() + SESSION_TTL_MS;
   if (sqlite) {
     sqlite.prepare('INSERT INTO sessions (token_hash,user_id,workspace_id,expires_at,created_at) VALUES (?,?,?,?,?)')
       .run(hashToken(token), userId, workspaceId, expires, new Date().toISOString());
+    if (replaceHash) sqlite.prepare('DELETE FROM sessions WHERE token_hash=?').run(replaceHash);
     sqlite.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now()); // opportunistic GC
   } else {
     memSessions.set(token, { userId, workspaceId, expires });
   }
   return token;
+}
+/* Shared implementation for POST /api/auth/demo/reset and the legacy alias
+ * POST /api/reset-demo. Everything that still references the demo workspace
+ * must go away before the workspace row itself: sessions.workspace_id is a
+ * plain FK with no ON DELETE action (memberships, prefs, projects, tasks,
+ * channels, ... all cascade). The old code deleted the workspace first while
+ * the caller's live session still pointed at it -> 500 FOREIGN KEY constraint
+ * failed. Delete-then-recreate also lands on a fresh AUTOINCREMENT id, so the
+ * new session must be created inside ONE transaction together with the
+ * re-seed; if anything throws, better-sqlite3 rolls back and the user keeps
+ * their original data and cookie. */
+function resetDemoWorkspace(ctx) {
+  const oldWsId = ctx.workspace.id;
+  let newWsId = null, token = null;
+  sqlite.transaction(() => {
+    /* Drop every session still pointing at the doomed workspace (all users,
+     * not just the caller), then delete the workspace — child rows cascade.
+     * Also clear the stale per-workspace message-seed flag of the old id. */
+    sqlite.prepare('DELETE FROM sessions WHERE workspace_id=?').run(oldWsId);
+    sqlite.prepare('DELETE FROM meta WHERE k=?').run('seeded_msgs_' + oldWsId);
+    sqlite.prepare('DELETE FROM workspaces WHERE id=?').run(oldWsId);
+    newWsId = seedDemoWorkspace();                       // pristine seed + demo_workspace_id pointer
+    token = createSession(ctx.user.id, newWsId, hashToken(ctx.token)); // swap caller into fresh session atomically
+  })();
+  return { newWsId, token };
 }
 function destroySession(token) {
   if (sqlite) sqlite.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashToken(token));
@@ -1047,10 +1080,8 @@ function claimInvitationsForUser(userId, email) {
     if (routeKey === 'demo/reset' && method === 'POST') {
       if (guardWrite(res)) return;
       if (!ctx || ctx.workspace.kind !== 'demo') return send(res, 403, { error: 'only available in the demo workspace' });
-      sqlite.prepare('DELETE FROM workspaces WHERE id=?').run(ctx.workspace.id);
-      const wsId = seedDemoWorkspace();
-      const token = createSession(ctx.user.id, wsId);
-      return send(res, 200, { ok: true, workspace: { id: wsId } }, { 'Set-Cookie': sessionCookie(token, SESSION_TTL_MS / 1000) });
+      const { newWsId, token } = resetDemoWorkspace(ctx);
+      return send(res, 200, { ok: true, workspace: { id: newWsId } }, { 'Set-Cookie': sessionCookie(token, SESSION_TTL_MS / 1000) });
     }
 
     /* POST /api/auth/logout — always 200 + always clear the cookie. The old
@@ -1190,13 +1221,12 @@ async function handleApi(req, res, url) {
     return send(res, 200, { ok: true, purged: info.changes || 0 });
   }
 
-  /* --- reset demo workspace back to pristine seed (any member of the demo ws) --- */
+  /* --- reset demo workspace back to pristine seed (any member of the demo ws) ---
+   * Legacy alias of POST /api/auth/demo/reset — same transactional helper. */
   if (routeKey === 'reset-demo' && method === 'POST') {
     if (ctx.workspace.kind !== 'demo') return send(res, 403, { error: 'only the demo workspace can be reset' });
-    sqlite.prepare('DELETE FROM workspaces WHERE id=?').run(wsId);
-    const newId = seedDemoWorkspace();
-    const token = createSession(ctx.user.id, newId);
-    return send(res, 200, { ok: true, workspace: { id: newId } }, { 'Set-Cookie': sessionCookie(token, SESSION_TTL_MS / 1000) });
+    const { newWsId, token } = resetDemoWorkspace(ctx);
+    return send(res, 200, { ok: true, workspace: { id: newWsId } }, { 'Set-Cookie': sessionCookie(token, SESSION_TTL_MS / 1000) });
   }
 
   /* --- people (workspace members only) --- */
