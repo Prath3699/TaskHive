@@ -34,7 +34,9 @@ const personById = (id) => PEOPLE.find(p => p.id === id) || PEOPLE[0] || { name:
 // Task list exactly as in the design (15 tasks) — ids unique server-side;
 // the real data now comes from the backend via GET /api/bootstrap.
 
-const CHANNELS = {
+/* Channels are loaded from the backend (GET /api/bootstrap -> channels[]).
+   The static list below is only the fallback used before bootstrap finishes. */
+let CHANNELS = {
   engineering:    { topic: 'Builds, incidents and API chatter for the platform team.' },
   docs:           { topic: 'Everything documentation — PRDs, guides, changelogs.' },
   teams:          { topic: 'Cross-team coordination and people ops.' },
@@ -43,6 +45,28 @@ const CHANNELS = {
   design:         { topic: 'Design critiques, mockups and the design system.' },
   marketing:      { topic: 'Campaigns, launches and growth experiments.' },
 };
+const channelName = (key) => key.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+/* Re-render the sidebar "Your channels" group from the live CHANNELS map so
+   newly created channels appear immediately without a page reload. */
+function renderChannelNav() {
+  const side = document.querySelector('.sidebar');
+  if (!side) return;
+  const head = [...side.children].find(n => n.classList.contains('nav-section') && n.textContent.trim() === 'Your channels');
+  if (!head) return;
+  let node = head.nextElementSibling;
+  while (node && node.classList.contains('nav-item') && node.classList.contains('channel')) {
+    const next = node.nextElementSibling; node.remove(); node = next;
+  }
+  for (const [key, ch] of Object.entries(CHANNELS)) {
+    const a = document.createElement('a');
+    a.href = `#/channel/${key}`;
+    a.className = 'nav-item channel';
+    a.dataset.route = 'channel'; a.dataset.param = key;
+    a.innerHTML = `<span class="ch-hash">#</span>${esc(channelName(key))}`;
+    a.addEventListener('click', () => setSidebar(false));
+    node ? side.insertBefore(a, node) : side.appendChild(a);
+  }
+}
 
 /* Channel messages come from the backend (GET /api/channels/:id) */
 let CHANNEL_MESSAGES = {};
@@ -1644,15 +1668,67 @@ function showShareModal(projectName) {
 }
 
 function showNewFeatureModal() {
+  /* Assignees = real workspace members (incl. people added via "Add person"),
+     with "Unassigned" first; Project list always starts with "No project";
+     Urgency defaults to Medium ("Moderate"). */
+  const assigneeOpts = `<option value="">Unassigned</option>` + PEOPLE.map(p => `<option value="${esc(p.id)}"${p.id === ME ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+  const projOpts = `<option value="">No project</option>` + PROJECTS.map(p => `<option value="${esc(p.id)}"${p.id === currentProject ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
   openModal('New task', `
     <form id="new-feature-form">
       <label>Name<input id="nf-name" type="text" required placeholder="e.g. Add keyboard shortcuts" /></label>
       <label>Progress<select id="nf-progress">${Object.keys(PROGRESS).map(k => `<option>${k}</option>`).join('')}</select></label>
-      <label>Urgency<select id="nf-urgency">${Object.keys(URGENCY).map(k => `<option>${k}</option>`).join('')}</select></label>
-      <label>Assignee<select id="nf-assignee">${PEOPLE.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}</select></label>
-      <label>Project<select id="nf-project">${PROJECTS.map(p => `<option value="${slugify(p.name)}" ${slugify(p.name) === currentProject ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
+      <label>Urgency<select id="nf-urgency">${Object.keys(URGENCY).map(k => `<option${k === 'Moderate' ? ' selected' : ''}>${k}</option>`).join('')}</select></label>
+      <label>Assignee<select id="nf-assignee">${assigneeOpts}</select></label>
+      <label>Project<select id="nf-project">${projOpts}</select></label>
       <button type="submit" class="btn btn-primary">Create task</button>
     </form>`);
+}
+
+const PROJECT_COLORS = ['', '#7c5cff', '#43b3ff', '#2fbf71', '#f5a623', '#e5484d', '#9b7bff'];
+function showNewProjectModal() {
+  openModal('New project', `
+    <form id="new-project-form">
+      <label>Name<input id="np-name" type="text" required maxlength="120" placeholder="e.g. Mobile App v3" autocomplete="off" /></label>
+      <label>Description<textarea id="np-desc" rows="3" placeholder="What is this project about? (optional)"></textarea></label>
+      <label>Color<select id="np-color">${PROJECT_COLORS.map((c, i) => `<option value="${c}"${i === 0 ? ' selected' : ''}>${c ? c : 'Default (accent)'}</option>`).join('')}</select></label>
+      <p class="field-error hidden" id="np-error" role="alert"></p>
+      <button type="submit" class="btn btn-primary">Create project</button>
+    </form>`);
+}
+
+function showNewChannelModal() {
+  openModal('New channel', `
+    <form id="new-channel-form">
+      <label>Name<input id="nc-name" type="text" required minlength="2" maxlength="30" placeholder="e.g. release-train (2–30 characters)" autocomplete="off" /></label>
+      <label>Topic<input id="nc-topic" type="text" maxlength="200" placeholder="What is this channel for? (optional)" autocomplete="off" /></label>
+      <p class="field-error hidden" id="nc-error" role="alert"></p>
+      <button type="submit" class="btn btn-primary">Create channel</button>
+    </form>`);
+}
+
+function showAddPersonModal() {
+  openModal('Add person', `
+    <form id="add-person-form">
+      <label>Full name<input id="ap-name" type="text" required maxlength="80" placeholder="e.g. Jordan Lee" autocomplete="off" /></label>
+      <label>Email<input id="ap-email" type="email" required maxlength="120" placeholder="jordan@company.com" autocomplete="off" /></label>
+      <label>Role<select id="ap-role"><option value="member" selected>Member</option><option value="admin">Admin</option></select></label>
+      <p class="field-error hidden" id="ap-error" role="alert"></p>
+      <div class="invite-note hidden" id="ap-note"></div>
+      <button type="submit" class="btn btn-primary" id="ap-submit">Add person</button>
+    </form>`);
+}
+
+function setFormError(id, msg) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg || '';
+  el.classList.toggle('hidden', !msg);
+}
+function setSubmitting(btnSel, busy, label = 'Save') {
+  const b = $(btnSel);
+  if (!b) return;
+  b.disabled = busy;
+  b.textContent = busy ? 'Working…' : label;
 }
 
 /* ============================ EVENT DELEGATION ============================ */
@@ -1701,8 +1777,9 @@ document.body.addEventListener('click', (e) => {
   if (el.dataset.new !== undefined && el.closest('#new-split-menu')) {
     closeSplitMenu();
     if (el.dataset.new === 'task') return showNewFeatureModal();
-    if (el.dataset.new === 'project') return openModal('New project', `<form id="new-project-form"><label>Project name<input id="np-name" type="text" required placeholder="e.g. Mobile App v3" /></label><label>Owner<select id="np-owner">${PEOPLE.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}</select></label><button class="btn btn-primary">Create project</button></form>`);
-    if (el.dataset.new === 'channel') return toast('ℹ Channel creation is not available in this demo yet.');
+    if (el.dataset.new === 'project') return showNewProjectModal();
+    if (el.dataset.new === 'channel') return showNewChannelModal();
+    if (el.dataset.new === 'person') return showAddPersonModal();
   }
   if (el.dataset.plan) { closeModal(); return toast(`🎉 ${el.dataset.plan} plan selected (demo)`); }
   if (el.id === 'copy-link') {
@@ -1752,9 +1829,7 @@ document.body.addEventListener('click', (e) => {
     location.hash = `#/project/${el.dataset.project}`;
     return;
   }
-  if (el.id === 'new-project-btn') {
-    return openModal('New project', `<form id="new-project-form"><label>Project name<input id="np-name" type="text" required placeholder="e.g. Mobile App v3" /></label><label>Owner<select id="np-owner">${PEOPLE.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}</select></label><button class="btn btn-primary">Create project</button></form>`);
-  }
+  if (el.id === 'new-project-btn') return showNewProjectModal();
   if (el.dataset.person !== undefined) {
     const p = personById(el.dataset.person);
     return openModal(p.name, `
@@ -2049,18 +2124,37 @@ function focusGlobalSearch() {
   updateSearchResults(inp.value);
 }
 
-function openSplitMenu() {
-  $('#new-split-menu')?.classList.remove('hidden');
-  $('#new-split-toggle')?.setAttribute('aria-expanded', 'true');
+function splitMenuItems() {
+  return [...document.querySelectorAll('#new-split-menu [role="menuitem"]')].filter(b => !b.disabled && !b.hidden);
 }
-function closeSplitMenu() {
+function openSplitMenu(focusFirst = false) {
+  const menu = $('#new-split-menu');
+  if (!menu) return;
+  menu.classList.remove('hidden');
+  $('#new-split-toggle')?.setAttribute('aria-expanded', 'true');
+  if (focusFirst) splitMenuItems()[0]?.focus();
+}
+function closeSplitMenu(returnFocus = false) {
   $('#new-split-menu')?.classList.add('hidden');
   $('#new-split-toggle')?.setAttribute('aria-expanded', 'false');
+  if (returnFocus) $('#new-split-toggle')?.focus();
 }
 $('#new-split-toggle').addEventListener('click', (e) => {
   e.stopPropagation();
   const menu = $('#new-split-menu');
-  menu.classList.contains('hidden') ? openSplitMenu() : closeSplitMenu();
+  if (menu.classList.contains('hidden')) { openSplitMenu(true); }
+  else { closeSplitMenu(true); }
+});
+/* Arrow-key / Home / End navigation inside the create menu (role=menu) */
+$('#new-split-menu')?.addEventListener('keydown', (e) => {
+  const items = splitMenuItems();
+  const i = items.indexOf(document.activeElement);
+  if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1 + items.length) % items.length || 0]?.focus(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
+  else if (e.key === 'Home') { e.preventDefault(); items[0]?.focus(); }
+  else if (e.key === 'End') { e.preventDefault(); items[items.length - 1]?.focus(); }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSplitMenu(true); }
+  else if (e.key === 'Tab') { closeSplitMenu(); }
 });
 document.addEventListener('click', (e) => {
   const split = $('#new-split');
@@ -2199,25 +2293,70 @@ document.body.addEventListener('submit', (e) => {
     const body = {
       name,
       progress: $('#nf-progress').value, urgency: $('#nf-urgency').value,
-      assignee: $('#nf-assignee').value,
-      project: $('#nf-project') ? $('#nf-project').value : 'q3-plan',
+      assignee: $('#nf-assignee').value,          /* "" = Unassigned */
+      project: $('#nf-project') ? $('#nf-project').value : '',  /* "" = No project */
       comments: 0,
     };
     api('POST', '/tasks', body).then(created => {   // server assigns id + stable idx
       TASKS.unshift(created);
       closeModal(); toast(`✔ Created “${name}”`);
-      if (!location.hash.startsWith('#/project') && !location.hash.startsWith('#/task')) location.hash = '#/project/q3-plan';
-      else render();
+      render();                                     // board + "Your tasks" update immediately
     }).catch(err => toast(`⚠ Create failed: ${err.message}`));
   }
   if (e.target.id === 'new-project-form') {
     e.preventDefault();
     const name = $('#np-name').value.trim();
-    if (!name) return;
-    saveProject(name).then(pr => {
-      PROJECTS.push(pr);
-      closeModal(); toast(`✔ Project “${pr.name}” created`); render();
-    }).catch(err => toast(`⚠ Could not create project: ${err.message}`));
+    setFormError('np-error', '');
+    if (!name) return setFormError('np-error', 'Please enter a project name');
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'Working…';
+    api('POST', '/projects', { name, desc: $('#np-desc').value.trim(), color: $('#np-color').value })
+      .then(pr => {
+        PROJECTS.push(pr);
+        closeModal(); render();
+        location.hash = `#/project/${pr.id}`;       // navigate straight to the new project
+        toast(`✔ Project “${pr.name}” created`);
+      })
+      .catch(err => { btn.disabled = false; btn.textContent = 'Create project'; setFormError('np-error', err.message); });
+  }
+  if (e.target.id === 'new-channel-form') {
+    e.preventDefault();
+    const name = $('#nc-name').value.trim();
+    setFormError('nc-error', '');
+    if (name.length < 2 || name.length > 30) return setFormError('nc-error', 'Channel name must be 2 to 30 characters');
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'Working…';
+    api('POST', '/channels', { name, topic: $('#nc-topic').value.trim() })
+      .then(ch => {
+        CHANNELS[ch.id] = { topic: ch.topic || '' };
+        CHANNEL_MESSAGES[ch.id] = [];
+        renderChannelNav();
+        closeModal();
+        location.hash = `#/channel/${ch.id}`;       // jump into the new channel
+        toast(`✔ Channel #${channelName(ch.id)} created`);
+      })
+      .catch(err => { btn.disabled = false; btn.textContent = 'Create channel'; setFormError('nc-error', err.message); });
+  }
+  if (e.target.id === 'add-person-form') {
+    e.preventDefault();
+    const name = $('#ap-name').value.trim();
+    const email = $('#ap-email').value.trim();
+    setFormError('ap-error', '');
+    if (name.length < 2) return setFormError('ap-error', 'Please enter a full name (min 2 characters)');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return setFormError('ap-error', 'Please enter a valid email address');
+    const btn = $('#ap-submit');
+    btn.disabled = true; btn.textContent = 'Working…';
+    api('POST', '/members', { name, email, role: $('#ap-role').value })
+      .then(r => {
+        btn.disabled = false; btn.textContent = 'Add person';
+        PEOPLE = r.joined
+          ? [...PEOPLE.filter(p => p.email !== r.person.email), r.person]
+          : [...PEOPLE, r.person];
+        loadMembers();                              // refresh Settings → People list
+        closeModal(); render();
+        toast(r.joined ? `✔ ${r.person.name} added to the workspace` : `✉ Invitation created for ${r.person.email}`);
+      })
+      .catch(err => { btn.disabled = false; btn.textContent = 'Add person'; setFormError('ap-error', err.message); });
   }
   if (e.target.id === 'support-form') {
     e.preventDefault(); closeModal(); toast('✉ Message sent to support');

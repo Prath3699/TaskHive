@@ -302,12 +302,30 @@ function initSchema() {
     ui TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (workspace_id, user_id)
   );
+  CREATE TABLE IF NOT EXISTS invited_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'member',          /* admin | member */
+    invited_by INTEGER REFERENCES users(id),
+    user_id INTEGER REFERENCES users(id),         /* set when the invitee signs up (claimed) */
+    created_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_invited_ws_email ON invited_members(workspace_id, email);
+  CREATE INDEX IF NOT EXISTS idx_invited_email ON invited_members(email);
   CREATE TABLE IF NOT EXISTS counters (
     workspace_id INTEGER PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
     next_task_num INTEGER NOT NULL DEFAULT 100,
     next_idx INTEGER NOT NULL DEFAULT 1
   );`);
-  const row = sqlite.prepare('SELECT v FROM meta WHERE k=?').get('schema_version');
+    /* Safe migration: projects.color (added for New project dialog). Works on
+   * fresh and existing databases; harmless if the column already exists. */
+  try {
+    const cols = sqlite.prepare("PRAGMA table_info(projects)").all().map(c => c.name);
+    if (!cols.includes('color')) sqlite.exec("ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT ''");
+  } catch (_) {}
+const row = sqlite.prepare('SELECT v FROM meta WHERE k=?').get('schema_version');
   if (!row) sqlite.prepare('INSERT INTO meta (k,v) VALUES (?,?)').run('schema_version', String(SCHEMA_VERSION));
 }
 
@@ -335,9 +353,10 @@ const wsStmt = {
   taskMaxOrd:    () => sqlite.prepare('SELECT COALESCE(MAX(ord),0)+1 AS n FROM tasks WHERE workspace_id=?'),
   projectsAll:   () => sqlite.prepare('SELECT * FROM projects WHERE workspace_id=? ORDER BY idx'),
   projectById:   () => sqlite.prepare('SELECT * FROM projects WHERE workspace_id=? AND id=?'),
-  projectUpsert: () => sqlite.prepare(`INSERT INTO projects (id,workspace_id,name,descr,members,idx)
-      VALUES (@id,@workspace_id,@name,@descr,@members,@idx)
-      ON CONFLICT(workspace_id,id) DO UPDATE SET name=@name,descr=@descr,members=@members,idx=@idx`),
+  projectUpsert: () => sqlite.prepare(`INSERT INTO projects (id,workspace_id,name,descr,members,idx,color)
+      VALUES (@id,@workspace_id,@name,@descr,@members,@idx,COALESCE(@color,''))
+      ON CONFLICT(workspace_id,id) DO UPDATE SET name=@name,descr=@descr,members=@members,idx=@idx,
+        color=COALESCE(@color,color)`),
   projectDelete: () => sqlite.prepare('DELETE FROM projects WHERE workspace_id=? AND id=?'),
   inboxAll:      () => sqlite.prepare('SELECT * FROM inbox_items WHERE workspace_id=? ORDER BY ord'),
   inboxById:     () => sqlite.prepare('SELECT * FROM inbox_items WHERE workspace_id=? AND id=?'),
@@ -367,7 +386,7 @@ function taskFromRow(r) {
 function projectFromRow(r) {
   let members = [];
   try { members = JSON.parse(r.members); } catch (_) {}
-  return { id: r.id, name: r.name, desc: r.descr, members, idx: r.idx };
+  return { id: r.id, name: r.name, desc: r.descr, members, idx: r.idx, color: r.color || '' };
 }
 
 /* Monotonic id/idx allocation per workspace (safe against import & restarts). */
@@ -788,17 +807,24 @@ function sanitizeTask(input, existing = {}, ctx = null) {
     t.urgency = input.urgency;
   }
   if (input.assignee !== undefined) {
-    const a = cleanStr(String(input.assignee), 40);
-    if (ctx) {
+    const a = cleanStr(String(input.assignee ?? ''), 40);
+    if (!a) { t.assignee = null; }               /* "Unassigned" is a valid choice */
+    else if (ctx) {
       const ok = sqlite.prepare('SELECT 1 AS x FROM memberships WHERE workspace_id=? AND user_id=?').get(ctx.workspace.id, Number(a));
       if (!ok) throw new Error(`assignee not in your workspace`);
-    } else if (!/^\d+$/.test(a)) throw new Error(`unknown assignee "${a}"`);
-    t.assignee = a;
+      t.assignee = a;
+    } else {
+      if (!/^\d+$/.test(a)) throw new Error(`unknown assignee "${a}"`);
+      t.assignee = a;
+    }
   }
   if (input.project !== undefined) {
-    const pid = cleanStr(String(input.project), 80);
-    if (ctx && !wsStmt.projectById().get(ctx.workspace.id, pid)) throw new Error(`unknown project "${pid}"`);
-    t.project = pid;
+    const pid = cleanStr(String(input.project ?? ''), 80);
+    if (!pid) { t.project = null; }        /* "No project" is a valid choice */
+    else {
+      if (ctx && !wsStmt.projectById().get(ctx.workspace.id, pid)) throw new Error(`unknown project "${pid}"`);
+      t.project = pid;
+    }
   }
   if (input.comments !== undefined) {
     const n = Number(input.comments);
@@ -837,8 +863,17 @@ function savePrefs(ctx, p) {
 }
 
 function workspacePeople(ctx) {
-  return sqlite.prepare(`SELECT u.* FROM users u JOIN memberships m ON m.user_id=u.id
+  const active = sqlite.prepare(`SELECT u.* FROM users u JOIN memberships m ON m.user_id=u.id
     WHERE m.workspace_id=? ORDER BY u.id`).all(ctx.workspace.id).map(personView);
+  /* Pending invites appear in the same list (avatars, assignee dropdowns) and
+   * become real accounts automatically when that email signs up. */
+  let invited = [];
+  try {
+    invited = sqlite.prepare(`SELECT id, name, email FROM invited_members WHERE workspace_id=? AND user_id IS NULL ORDER BY id`)
+      .all(ctx.workspace.id)
+      .map(r => ({ id: 'inv-' + r.id, name: r.name, initials: initialsFrom(r.name), color: '#8a93a6', email: r.email, invited: true }));
+  } catch (_) {}
+  return [...active, ...invited];
 }
 
 function bootstrapPayload(ctx) {
@@ -923,6 +958,7 @@ if (!sqlite) return send(res, 503, { error: 'database unavailable' });
       let userId;
       try { userId = createUser({ name, email, password, color, isDemo: false }); }
       catch (e) { console.error('[auth] signup insert failed:', e.message); return send(res, 500, { error: 'could not create account' }); }
+      claimInvitationsForUser(userId, email);   /* pending "Add person" invites become Active now */
       /* Sample data is strictly OPT-IN: only seed when the checkbox was ticked.
    * (Previously everything except explicit false/0/'false' counted as a yes,
    * so unchecked forms / non-boolean payloads still got the demo board.) */
@@ -965,7 +1001,21 @@ if (!sqlite) return send(res, 503, { error: 'database unavailable' });
         { 'Set-Cookie': sessionCookie(token, SESSION_TTL_MS / 1000) });
     }
 
-    /* POST /api/auth/demo — log into the shared, resettable demo workspace */
+    /* Claim any pending invitations for a freshly created account: an invited
+   * person added via "Add person" becomes an Active member the moment they
+   * sign up with the same (normalized) email. Parameterized only. */
+function claimInvitationsForUser(userId, email) {
+  if (!sqlite) return;
+  try {
+    const rows = sqlite.prepare('SELECT id, workspace_id FROM invited_members WHERE email=? AND user_id IS NULL').all(email);
+    for (const r of rows) {
+      addMembership(r.workspace_id, userId, 'member');
+      sqlite.prepare('UPDATE invited_members SET user_id=? WHERE id=?').run(userId, r.id);
+    }
+  } catch (_) {}
+}
+
+/* POST /api/auth/demo — log into the shared, resettable demo workspace */
     if (routeKey === 'demo' && method === 'POST') {
       if (guardWrite(res)) return;
       const dr = rateLimit(`demo:${clientIp(req)}`, 10, 60e3);
@@ -1230,6 +1280,77 @@ async function handleApi(req, res, url) {
     return send(res, 405, { error: 'method not allowed' });
   }
 
+  /* --- workspace members incl. pending invitations (admins manage) --- */
+  if (seg === 'members') {
+    const listPeople = workspacePeople(ctx);
+    let invites = [];
+    try {
+      invites = sqlite.prepare('SELECT * FROM invited_members WHERE workspace_id=? ORDER BY id').all(wsId);
+    } catch (_) {}
+    const rows = listPeople.map(p => ({ ...p, status: p.invited ? 'invited' : 'active', role: 'member' }));
+    for (const r of rows) {
+      const m = sqlite.prepare('SELECT role FROM memberships WHERE workspace_id=? AND user_id=?').get(wsId, Number(r.id));
+      if (m) r.role = m.role;
+    }
+    const invRows = invites.filter(i => !i.user_id).map(i => ({
+      id: 'inv-' + i.id, name: i.name, email: i.email, role: i.role,
+      status: 'invited', initials: initialsFrom(i.name), color: '#8a93a6', invited: true,
+    }));
+    if (method === 'GET' && !param) return send(res, 200, [...rows, ...invRows]);
+    if (method === 'POST' && !param) {
+      if (ctx.membership.role !== 'admin') return send(res, 403, { error: 'only workspace admins can add people' });
+      if (readOnly) return denyReadOnly();
+      const b = await readBody(req);
+      const name = cleanStr(b.name, 80);
+      const email = normalizeEmail(String(b.email || ''));
+      const role = b.role === 'admin' ? 'admin' : 'member';
+      if (name.length < 2) return send(res, 400, { error: 'Please enter a full name (min 2 characters)' });
+      if (!EMAIL_RE.test(email)) return send(res, 400, { error: 'Please enter a valid email address' });
+      const existing = getUserByEmail(email);
+      if (existing) {
+        const already = sqlite.prepare('SELECT 1 AS x FROM memberships WHERE workspace_id=? AND user_id=?').get(wsId, existing.id);
+        if (already) return send(res, 409, { error: `${email} is already a member of this workspace` });
+        addMembership(wsId, existing.id, role);
+        try { sqlite.prepare('INSERT OR IGNORE INTO invited_members (workspace_id,email,name,role,invited_by,user_id,created_at) VALUES (?,?,?,?,?,?,?)')
+          .run(wsId, email, name, role, ctx.user.id, existing.id, new Date().toISOString()); } catch (_) {}
+        return send(res, 201, { ok: true, joined: true, person: personView(sqlite.prepare('SELECT * FROM users WHERE id=?').get(existing.id)) });
+      }
+      const dupInvite = invites.find(i => i.email === email && !i.user_id);
+      if (dupInvite) return send(res, 409, { error: `${email} has already been invited to this workspace` });
+      let invId;
+      try {
+        invId = sqlite.prepare('INSERT INTO invited_members (workspace_id,email,name,role,invited_by,created_at) VALUES (?,?,?,?,?,?)')
+          .run(wsId, email, name, role, ctx.user.id, new Date().toISOString()).lastInsertRowid;
+      } catch (e) { return send(res, 409, { error: `${email} has already been invited to this workspace` }); }
+      return send(res, 201, { ok: true, invited: true, person: { id: 'inv-' + invId, name, email, role, status: 'invited',
+        initials: initialsFrom(name), color: '#8a93a6', invited: true } });
+    }
+    if (method === 'DELETE' && param) {
+      if (ctx.membership.role !== 'admin') return send(res, 403, { error: 'only workspace admins can remove people' });
+      if (readOnly) return denyReadOnly();
+      if (String(param).startsWith('inv-')) {
+        const info = sqlite.prepare('DELETE FROM invited_members WHERE workspace_id=? AND id=? AND user_id IS NULL').run(wsId, Number(param.slice(4)));
+        if (!info.changes) return send(res, 404, { error: 'invitation not found' });
+        return send(res, 200, { deleted: true, id: param });
+      }
+      const uid = Number(param);
+      if (!uid) return send(res, 400, { error: 'invalid member id' });
+      if (uid === ctx.user.id) return send(res, 400, { error: 'you cannot remove yourself' });
+      const target = sqlite.prepare('SELECT u.id, u.name FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.workspace_id=? AND u.id=?').get(wsId, uid);
+      if (!target) return send(res, 404, { error: 'person not found in this workspace' });
+      const owner = sqlite.prepare('SELECT owner_id FROM workspaces WHERE id=?').get(wsId);
+      if (owner && owner.owner_id === uid) return send(res, 400, { error: 'the workspace owner cannot be removed' });
+      const tx = sqlite.transaction(() => {
+        sqlite.prepare('UPDATE tasks SET assignee = NULL WHERE workspace_id=? AND assignee=?').run(wsId, String(uid));
+        sqlite.prepare('DELETE FROM memberships WHERE workspace_id=? AND user_id=?').run(wsId, uid);
+        try { sqlite.prepare('DELETE FROM invited_members WHERE workspace_id=? AND user_id=?').run(wsId, uid); } catch (_) {}
+      });
+      tx();
+      return send(res, 200, { deleted: true, id: param, unassignedTasks: true });
+    }
+    return send(res, 405, { error: 'method not allowed' });
+  }
+
   /* --- projects --- */
   if (seg === 'projects') {
     const tasks = wsStmt.tasksAll().all(wsId);
@@ -1243,9 +1364,10 @@ async function handleApi(req, res, url) {
       const name = cleanStr(b.name, 120);
       if (!name) return send(res, 400, { error: 'name is required' });
       const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + crypto.randomBytes(2).toString('hex');
+      const color = /^#[0-9a-fA-F]{6}$/.test(String(b.color || '')) ? String(b.color) : '';
       const proj = { id, name, desc: cleanStr(b.desc, 500), members: [String(ctx.user.id)],
-                     idx: wsStmt.projectsAll().all(wsId).length };
-      wsStmt.projectUpsert().run({ id, workspace_id: wsId, name: proj.name, descr: proj.desc, members: JSON.stringify(proj.members), idx: proj.idx });
+                     idx: wsStmt.projectsAll().all(wsId).length, color };
+      wsStmt.projectUpsert().run({ id, workspace_id: wsId, name: proj.name, descr: proj.desc, members: JSON.stringify(proj.members), idx: proj.idx, color });
       return send(res, 201, proj);
     }
     const prow = wsStmt.projectById().get(wsId, param);
@@ -1258,7 +1380,8 @@ async function handleApi(req, res, url) {
       if (b.name) proj.name = cleanStr(b.name, 120);
       if (b.desc !== undefined) proj.desc = cleanStr(b.desc, 500);
       if (Array.isArray(b.members)) proj.members = b.members.map(String).slice(0, 200);
-      wsStmt.projectUpsert().run({ id: proj.id, workspace_id: wsId, name: proj.name, descr: proj.desc, members: JSON.stringify(proj.members), idx: proj.idx });
+      if (/^#[0-9a-fA-F]{6}$/.test(String(b.color || ''))) proj.color = String(b.color);
+      wsStmt.projectUpsert().run({ id: proj.id, workspace_id: wsId, name: proj.name, descr: proj.desc, members: JSON.stringify(proj.members), idx: proj.idx, color: proj.color });
       return send(res, 200, proj);
     }
     if (method === 'DELETE') {
@@ -1304,7 +1427,7 @@ async function handleApi(req, res, url) {
       const name = cleanStr(b.name, 200);
       if (!name) return send(res, 400, { error: 'name is required' });
       const projects = wsStmt.projectsAll().all(wsId);
-      const defaultProject = b.project || (projects[0] && projects[0].id) || 'general';
+      const defaultProject = b.project || null;   /* tasks may live outside any project */
       if (b.project && !projects.some(p => p.id === b.project)) return send(res, 400, { error: `unknown project "${b.project}"` });
       const { ids, idxs } = allocIds(wsId, 1);
       let task;
@@ -1390,6 +1513,19 @@ async function handleApi(req, res, url) {
   /* --- channel messages --- */
   if (seg === 'channels') {
     const shapeMsg = (m) => ({ by: m.actor_key, who: m.who, initials: m.initials, color: m.color, text: m.text, time: m.time });
+    /* POST /api/channels — create a new channel (slugified, unique per workspace) */
+    if (method === 'POST' && !param) {
+      if (readOnly) return denyReadOnly();
+      const b = await readBody(req);
+      const raw = cleanStr(b.name, 60);
+      const slug = String(raw).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      if (slug.length < 2 || slug.length > 30) return send(res, 400, { error: 'channel name must be 2 to 30 characters (letters and numbers)' });
+      if (wsStmt.channelById().get(wsId, slug)) return send(res, 409, { error: `#${slug} already exists in this workspace` });
+      const topic = cleanStr(b.topic, 200);
+      const maxOrd = sqlite.prepare('SELECT COALESCE(MAX(ord),0)+1 AS n FROM channels WHERE workspace_id=?').get(wsId).n;
+      wsStmt.channelInsert().run(slug, wsId, topic, maxOrd);
+      return send(res, 201, { id: slug, topic, ord: maxOrd });
+    }
     if (method === 'GET' && param) {
       if (!wsStmt.channelById().get(wsId, param)) return send(res, 404, { error: 'channel not found' });
       const byKey = Object.fromEntries(workspacePeople(ctx).map(p => [p.id, p]));
