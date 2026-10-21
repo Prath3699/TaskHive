@@ -29,7 +29,15 @@ const mePerson = () => ME ? PEOPLE.find(p => p.id === ME) : null;
 const meName  = () => (mePerson() || { name: 'Guest' }).name;
 const meInitials = () => (mePerson() || { initials: '??' }).initials;
 const meColor = () => (mePerson() || { color: '#888' }).color;
-const personById = (id) => PEOPLE.find(p => p.id === id) || PEOPLE[0] || { name: 'Unknown', initials: '?', color: '#888' };
+/* Fallback for assignees that resolve to no known person (unassigned tasks,
+   or a seeded/legacy task pointing at an id that isn't in this workspace).
+   NEVER return undefined — callers read .name/.initials[0]/.color directly. */
+const UNKNOWN_PERSON = { name: 'Unassigned', initials: '?', color: '#888' };
+const personById = (id) => {
+  if (id == null || id === '') return UNKNOWN_PERSON;
+  const byStr = PEOPLE.find(p => String(p.id) === String(id));
+  return byStr || UNKNOWN_PERSON;
+};
 
 // Task list exactly as in the design (15 tasks) — ids unique server-side;
 // the real data now comes from the backend via GET /api/bootstrap.
@@ -46,6 +54,59 @@ let CHANNELS = {
   marketing:      { topic: 'Campaigns, launches and growth experiments.' },
 };
 const channelName = (key) => key.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+/* Hydrate the sidebar CHANNELS map from GET /api/bootstrap -> channels[].
+   Server data wins over the static fallback so created channels persist
+   across reloads; the demo seed list is kept only for ids the server omits. */
+function hydrateChannels(list) {
+  if (!Array.isArray(list)) return;
+  const next = {};
+  for (const ch of list) {
+    if (!ch || typeof ch !== 'string') continue;
+    next[ch] = { topic: (CHANNELS[ch] && CHANNELS[ch].topic) || '' };
+  }
+  /* keep demo fallback entries that the server still knows about, in order */
+  CHANNELS = Object.keys(next).length ? next : CHANNELS;
+}
+/* ---- workspace people / members state ---- */
+let WS_MEMBERS = [];            // GET /api/members rows: {id,name,email,role,status,...}
+const isAdmin = () => !!(WS && WS.role === 'admin');
+async function loadMembers() {
+  try {
+    WS_MEMBERS = await api('GET', '/members');
+  } catch (err) {
+    WS_MEMBERS = PEOPLE.map(p => ({ ...p, status: p.invited ? 'invited' : 'active', role: 'member' }));
+  }
+  updatePersonMenuItem();
+  const host = document.getElementById('people-list');
+  if (host) host.innerHTML = peopleListHtml();
+}
+/* Show the "Add person" menu item only for workspace admins. */
+function updatePersonMenuItem() {
+  const btn = document.querySelector('#new-split-menu [data-new="person"]');
+  if (btn) btn.hidden = !isAdmin();
+}
+/* Settings → People list: name, email, role and Active/Invited status.
+   Rendered from WS_MEMBERS (GET /api/members); admins can remove people. */
+function peopleListHtml() {
+  const rows = (WS_MEMBERS.length ? WS_MEMBERS : PEOPLE.map(p => ({ ...p, status: p.invited ? 'invited' : 'active', role: 'member' })));
+  if (!rows.length) return '<p class="muted">No people loaded yet.</p>';
+  const admin = isAdmin();
+  return `
+    <table class="people-table">
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th>${admin ? '<th></th>' : ''}</tr></thead>
+      <tbody>
+        ${rows.map(p => `
+        <tr>
+          <td><span class="avatar avatar-xs" style="--a:${esc(p.color || '#888')}">${esc(p.initials || '?')}</span> ${esc(p.name)}</td>
+          <td class="pp-email">${esc(p.email || '—')}</td>
+          <td>${esc(p.role === 'admin' ? 'Admin' : 'Member')}</td>
+          <td><span class="pp-status ${p.status === 'invited' ? 'pp-invited' : 'pp-active'}">${p.status === 'invited' ? 'Invited' : 'Active'}</span></td>
+          ${admin ? `<td>${String(p.id) !== String(ME) ? `<button class="btn btn-ghost danger btn-sm" data-remove-person="${esc(p.id)}">Remove</button>` : ''}</td>` : ''}
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    ${admin ? '<p class="st-hint">Removing a person unassigns their tasks — the tasks themselves are kept.</p>' : '<p class="st-hint">Only workspace admins can add or remove people.</p>'}`;
+}
 /* Re-render the sidebar "Your channels" group from the live CHANNELS map so
    newly created channels appear immediately without a page reload. */
 function renderChannelNav() {
@@ -277,8 +338,8 @@ function toolbarHtml() {
     <select id="flt-urgency" class="tool-select" aria-label="Filter by urgency">
       <option value="">All urgency</option>${Object.keys(URGENCY).map(k => `<option ${filterState.urgency === k ? 'selected' : ''}>${k}</option>`).join('')}
     </select>
-    <select id="flt-assignee" class="tool-select" data-assignee-filter aria-label="Filter by owner">
-      <option value="">All owners</option>${PEOPLE.map(p => `<option value="${esc(p.id)}" ${String(filterState.assignee) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+    <select id="flt-assignee" class="tool-select" aria-label="Filter by owner">
+      <option value="">All owners</option>${PEOPLE.map(p => `<option value="${p.id}" ${String(filterState.assignee) === p.id ? 'selected' : ''}>${p.name}</option>`).join('')}
     </select>
     ${active ? '<button id="clear-filters" class="btn btn-ghost btn-sm">Clear filters ✕</button>' : ''}
     <span class="toolbar-spacer"></span>
@@ -658,11 +719,7 @@ function propertiesPanelHtml(task) {
           ${Object.keys(PROGRESS).map(k => `<option ${k === task.progress ? 'selected' : ''}>${k}</option>`).join('')}
         </select></dd></div>
       <div class="prop-row"><dt>Category</dt><dd>${m.category}</dd></div>
-      <div class="prop-row"><dt>Task owner</dt><dd><button class="avatar avatar-xs link-avatar" style="--a:${owner.color}" data-person="${task.assignee}">${owner.initials[0]}</button>${esc(owner.name.split(' ')[0])}</dd></div>
-      ${canManagePeople() ? `<div class="prop-row"><dt>Reassign</dt><dd>
-        <select id="prop-assignee" data-idx="${task.idx}" class="prop-select" data-assignee-select aria-label="Reassign task">
-          ${assigneeOptionsHtml(task.assignee == null ? '' : String(task.assignee))}
-        </select></dd></div>` : ''}
+      <div class="prop-row"><dt>Task owner</dt><dd><button class="avatar avatar-xs link-avatar" style="--a:${owner.color}" data-person="${task.assignee}">${(owner.initials || '?')[0]}</button>${esc((owner.name || 'Unassigned').split(' ')[0])}</dd></div>
       <div class="prop-row"><dt>Urgency</dt><dd><span class="pill ${URGENCY[task.urgency]}">${task.urgency}</span></dd></div>
       <div class="prop-row"><dt>Department</dt><dd>${m.department}</dd></div>
       <div class="prop-row"><dt>Date added</dt><dd>${m.added}</dd></div>
@@ -741,7 +798,7 @@ function kanbanColsHtml(tasks) {
               return `<div class="kb-card" draggable="true" data-idx="${t.idx}" tabindex="0">
                 <div class="kb-name">${esc(t.name)}</div>
                 <div class="kb-meta"><span class="tsk-id">${t.id}</span><span class="pill ${URGENCY[t.urgency]}">${t.urgency}</span>
-                  <span class="avatar avatar-xs" style="--a:${p.color}" title="${p.name}">${p.initials[0]}</span></div>
+                  <span class="avatar avatar-xs" style="--a:${p.color}" title="${esc(p.name)}">${(p.initials || '?')[0]}</span></div>
               </div>`;
             }).join('') || '<div class="kb-empty">Drop tasks here</div>'}
           </div>
@@ -918,27 +975,6 @@ function trialDaysLeft() {
   const ms = Date.now() - new Date(WS.createdAt).getTime();
   return Math.max(0, TRIAL_LEN_DAYS - Math.floor(ms / 86400e3));
 }
-/* Gate the "Add person" menu item: only workspace owners/admins may add people.
-   Non-admins get it hidden; in the read-only demo workspace it stays visible
-   but disabled with a tooltip explaining why. Re-applied on every render(), so
-   it survives topbar re-renders and route changes. */
-function canManagePeople() {
-  return !!(WS && (WS.role === 'admin' || WS.role === 'owner') && !WS.readOnly);
-}
-function syncAddPersonItem() {
-  const btn = document.querySelector('#new-split-menu [data-new="person"]');
-  if (!btn) return;
-  const readOnlyDemo = !!(WS && WS.readOnly);
-  if (canManagePeople()) {
-    btn.hidden = false; btn.disabled = false; btn.removeAttribute('title');
-  } else if (readOnlyDemo) {
-    btn.hidden = false; btn.disabled = true;
-    btn.title = 'The demo workspace is read-only — create your own account to add people';
-  } else {
-    btn.hidden = true; btn.disabled = true;
-  }
-}
-
 function updateTrialCard() {
   const card = document.querySelector('.trial-card');
   if (!card) return;
@@ -1073,7 +1109,6 @@ function render() {
   const fn = routes[name] || routes.home;
   currentRoute = name;
   updateTrialCard();
-  syncAddPersonItem();   // gate "Add person" (admin-only / demo tooltip) every render
   // Show skeletons when navigating before bootstrap data has arrived.
   // (If loadBootstrap already painted them, keep its markup — don't re-inject.)
   if (!PEOPLE.length && !document.body.classList.contains('show-login') && !pageEl.querySelector('.sk-row,.sk-card,.sk-col')) {
@@ -1560,13 +1595,6 @@ routes.settings = () => {
         <a class="btn btn-ghost btn-sm" href="#/home">← Back to workspace</a>
       </div>
 
-      <!-- People (workspace members + pending invites; content injected by renderPeopleList) -->
-      <div class="settings-group st-people">
-        <h3>👥 People</h3>
-        <p class="st-desc">Members and pending invitations for this workspace. Removing a person unassigns their tasks but never deletes them.</p>
-        <div id="people-list"><p class="muted people-note">Loading people…</p></div>
-      </div>
-
       <!-- Profile hero card -->
       <div class="settings-group st-hero">
         <div class="st-hero-top">
@@ -1679,84 +1707,6 @@ function slugify(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace
 
 /* ============================ GLOBAL ACTIONS ============================ */
 
-/* ---- workspace people: shared state + helpers (assignee dropdowns, People list) ----
-   PEOPLE is hydrated from GET /api/bootstrap and refreshed by loadMembers()
-   after every add/remove, so newly added people (active OR invited) appear
-   immediately in every Assignee dropdown without a page reload. */
-const normEmail = (s) => String(s == null ? '' : s).trim().toLowerCase();
-
-async function loadMembers() {
-  try {
-    const list = await api('GET', '/members');
-    if (Array.isArray(list)) PEOPLE = list;
-  } catch (_) { /* keep the last known list on network failure */ }
-  renderPeopleList();               // refresh Settings → People if mounted
-  syncAddPersonItem();              // re-apply admin gating after data changes
-}
-
-function personStatus(p) {
-  if (!p) return '';
-  if (p.invited || p.status === 'invited' || String(p.id).startsWith('inv-')) return 'invited';
-  return 'active';
-}
-
-/* Options for any Assignee <select>: "Unassigned" first, then active members,
-   then pending invites (marked), excluding already-removed people. */
-function assigneeOptionsHtml(current) {
-  const cur = current == null ? '' : String(current);
-  const opt = (p, invited) =>
-    `<option value="${esc(p.id)}"${cur === String(p.id) ? ' selected' : ''}>${esc(p.name)}${invited ? ' (invited)' : ''}</option>`;
-  const act = PEOPLE.filter(p => personStatus(p) === 'active').map(p => opt(p, false));
-  const inv = PEOPLE.filter(p => personStatus(p) === 'invited').map(p => opt(p, true));
-  return `<option value=""${cur === '' ? ' selected' : ''}>Unassigned</option>` + act.join('') + inv.join('');
-}
-
-/* Re-render ONLY the assignee selects that are currently open, so adding or
-   removing a person updates the New task dialog / task panel live. A select
-   whose current value vanished (person removed) falls back to "Unassigned". */
-function refreshAssigneeSelects() {
-  document.querySelectorAll('select[data-assignee-select]').forEach(sel => {
-    const cur = sel.value;
-    sel.innerHTML = assigneeOptionsHtml(cur);
-    if (cur && !sel.querySelector(`option[value="${CSS.escape ? CSS.escape(cur) : cur}"]`)) {
-      sel.value = '';                       // removed person → Unassigned
-    }
-  });
-  /* Owner filter in the board toolbar: rebuild from PEOPLE, keep "All owners". */
-  document.querySelectorAll('select[data-assignee-filter]').forEach(sel => {
-    const cur = String(filterState.assignee);
-    sel.innerHTML = `<option value="">All owners</option>` + PEOPLE.map(p =>
-      `<option value="${esc(p.id)}"${cur === String(p.id) ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
-  });
-}
-
-/* Settings → People section markup (rendered async so it survives re-renders). */
-function peopleSectionHtml() {
-  const canManage = canManagePeople();
-  const rows = PEOPLE.map(p => {
-    const st = personStatus(p);
-    const role = esc(p.role || 'member');
-    return `<li class="people-row">
-      <span class="avatar avatar-sm" style="--a:${esc(p.color || '#8a93a6')}" aria-hidden="true">${esc(p.initials || '?')}</span>
-      <span class="people-id"><strong>${esc(p.name)}</strong><small>${esc(p.email || '')}</small></span>
-      <span class="people-role">${role}</span>
-      <span class="people-status ${st}">${st === 'invited' ? 'Invited' : 'Active'}</span>
-      ${canManage && String(p.id) !== String(ME)
-        ? `<button class="btn btn-ghost btn-sm people-remove" data-rmperson="${esc(p.id)}" aria-label="Remove ${esc(p.name)} from workspace">Remove</button>`
-        : ''}
-    </li>`;
-  }).join('');
-  return `<ul class="people-list">${rows || '<li class="people-empty muted">No people yet.</li>'}</ul>` +
-    (canManage
-      ? `<button class="btn btn-secondary btn-sm people-add-btn" data-new="person-open">＋ Add person</button>`
-      : `<p class="people-note muted">Only workspace admins can add or remove people.</p>`);
-}
-
-function renderPeopleList() {
-  const box = document.getElementById('people-list');
-  if (box) box.innerHTML = peopleSectionHtml();
-}
-
 function showUpgradeModal() {
   openModal('Upgrade plan', `
     <p class="modal-lead">Unlock unlimited projects, guests and history.</p>
@@ -1782,13 +1732,14 @@ function showNewFeatureModal() {
   /* Assignees = real workspace members (incl. people added via "Add person"),
      with "Unassigned" first; Project list always starts with "No project";
      Urgency defaults to Medium ("Moderate"). */
+  const assigneeOpts = `<option value="">Unassigned</option>` + PEOPLE.map(p => `<option value="${esc(p.id)}"${p.id === ME ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
   const projOpts = `<option value="">No project</option>` + PROJECTS.map(p => `<option value="${esc(p.id)}"${p.id === currentProject ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
   openModal('New task', `
     <form id="new-feature-form">
       <label>Name<input id="nf-name" type="text" required placeholder="e.g. Add keyboard shortcuts" /></label>
       <label>Progress<select id="nf-progress">${Object.keys(PROGRESS).map(k => `<option>${k}</option>`).join('')}</select></label>
       <label>Urgency<select id="nf-urgency">${Object.keys(URGENCY).map(k => `<option${k === 'Moderate' ? ' selected' : ''}>${k}</option>`).join('')}</select></label>
-      <label>Assignee<select id="nf-assignee" data-assignee-select>${assigneeOptionsHtml(ME)}</select></label>
+      <label>Assignee<select id="nf-assignee">${assigneeOpts}</select></label>
       <label>Project<select id="nf-project">${projOpts}</select></label>
       <button type="submit" class="btn btn-primary">Create task</button>
     </form>`);
@@ -1903,51 +1854,24 @@ document.body.addEventListener('click', (e) => {
   if (thBtn) { openColMenu(thBtn); return; }
   if (document.querySelector('.col-menu')) closeColMenus(); // click outside → dismiss
 
-  const el = e.target.closest('[id],[data-goto],[data-calday],[data-project],[data-inbox],[data-attachment],[data-person],[data-plan],[data-view],[data-export],[data-status],[data-mtview],[data-mtchip],[data-del],[data-rmf]');
+  /* Split-button menu items: handled BEFORE the generic closest('[id],…')
+     lookup so a [data-new] click is never swallowed by an ancestor with an
+     id. Delegation on document.body means this survives topbar re-renders
+     and route changes without re-attaching any listeners. */
+  const newItem = e.target.closest('#new-split-menu [data-new]');
+  if (newItem) {
+    closeSplitMenu(true);   // returns focus to the caret button, then opens the dialog
+    if (newItem.dataset.new === 'task') return showNewFeatureModal();
+    if (newItem.dataset.new === 'project') return showNewProjectModal();
+    if (newItem.dataset.new === 'channel') return showNewChannelModal();
+    if (newItem.dataset.new === 'person') return isAdmin() ? showAddPersonModal() : toast('Only workspace admins can add people');
+  }
+
+  const el = e.target.closest('[id],[data-goto],[data-calday],[data-project],[data-inbox],[data-attachment],[data-person],[data-plan],[data-view],[data-export],[data-status],[data-mtview],[data-mtchip],[data-del],[data-rmf],[data-remove-person]');
   if (!el) return;
 
   // Roadmap quarter filter chips
   if (el.dataset.rmf) { rmFilter = el.dataset.rmf; render(); return; }
-
-  /* ---- People list (Settings): open modal / remove person — delegated so it
-     survives the async re-render of #people-list. ---- */
-  const addP = e.target.closest('[data-new="person-open"]');
-  if (addP) { if (!canManagePeople()) return toast('🔒 Only workspace admins can add people'); return showAddPersonModal(); }
-  const rmP = e.target.closest('[data-rmperson]');
-  if (rmP) {
-    const pid = rmP.dataset.rmperson;
-    const p = PEOPLE.find(x => String(x.id) === String(pid));
-    if (!p) return;
-    if (!canManagePeople()) return toast('🔒 Only workspace admins can remove people');
-    if (String(pid) === String(ME)) return toast('You cannot remove yourself');
-    const name = esc(p.name);
-    openModal('Remove person', `
-      <p class="modal-lead">Remove <strong>${name}</strong> from this workspace?</p>
-      <p class="muted">Their tasks will be set to <em>Unassigned</em> — no tasks are deleted${personStatus(p) === 'invited' ? ', and their pending invitation is cancelled' : ''}.</p>
-      <div class="modal-actions">
-        <button class="btn btn-ghost" data-close>Cancel</button>
-        <button class="btn btn-danger" id="confirm-rm-person" data-rmperson-confirm="${esc(pid)}">Remove</button>
-      </div>`);
-    return;
-  }
-  const rmOk = e.target.closest('#confirm-rm-person');
-  if (rmOk) {
-    const pid = rmOk.dataset.rmpersonConfirm;
-    rmOk.disabled = true; rmOk.textContent = 'Working…';
-    api('DELETE', `/members/${encodeURIComponent(pid)}`)
-      .then(() => {
-        PEOPLE = PEOPLE.filter(x => String(x.id) !== String(pid));
-        let touched = false;
-        TASKS.forEach(t => {                            // server already unassigned; mirror locally
-          if (String(t.assignee || '') === String(pid)) { t.assignee = ''; touched = true; }
-        });
-        closeModal(); loadMembers(); render(); refreshAssigneeSelects();
-        toast(`✔ ${pNameFor(pid)} removed — their tasks are now unassigned`);
-        if (touched && currentRoute === 'task') render();
-      })
-      .catch(err => { rmOk.disabled = false; rmOk.textContent = 'Remove'; toast(`⚠ ${err.message}`); });
-    return;
-  }
 
   // My Tasks status pills (must run before the generic closest() id lookup)
   const pill = e.target.closest('.mt-pill');
@@ -1968,13 +1892,6 @@ document.body.addEventListener('click', (e) => {
   if (el.id === 'upgrade-btn') return showUpgradeModal();
   if (el.id === 'new-task-btn' || el.classList.contains('new-task-empty')) return showNewFeatureModal();
   if (el.id === 'new-fab') { e.preventDefault(); return showNewFeatureModal(); }
-  if (el.dataset.new !== undefined && el.closest('#new-split-menu')) {
-    closeSplitMenu();
-    if (el.dataset.new === 'task') return showNewFeatureModal();
-    if (el.dataset.new === 'project') return showNewProjectModal();
-    if (el.dataset.new === 'channel') return showNewChannelModal();
-    if (el.dataset.new === 'person') return showAddPersonModal();
-  }
   if (el.dataset.plan) { closeModal(); return toast(`🎉 ${el.dataset.plan} plan selected (demo)`); }
   if (el.id === 'copy-link') {
     const inp = $('#share-link');
@@ -2045,6 +1962,35 @@ document.body.addEventListener('click', (e) => {
         `<li><span class="status-dot ${PROGRESS[t.progress].dot}"></span><a href="#/task/${t.idx}">${esc(t.name)}</a></li>`).join('')}</ul>`);
   }
   if (el.dataset.attachment) { e.preventDefault(); return toast(`⬇ Downloading ${el.dataset.attachment}… (demo)`); }
+
+  /* ---- Settings → People: remove a member (admins only; server enforces too) ---- */
+  if (el.dataset.removePerson !== undefined) {
+    const id = el.dataset.removePerson;
+    const p = WS_MEMBERS.find(x => String(x.id) === String(id)) || personById(id);
+    return openModal('Remove person?', `
+      <p class="modal-lead">${esc(p.name || id)} will be removed from this workspace. Their tasks stay on the board but become <strong>Unassigned</strong>.</p>
+      <div class="settings-actions">
+        <button id="confirm-remove-person" data-rpid="${esc(id)}" class="btn btn-primary danger">Remove</button>
+        <button id="cancel-remove-person" class="btn btn-ghost">Cancel</button>
+      </div>`);
+  }
+  if (el.id === 'cancel-remove-person') { closeModal(); return; }
+  if (el.id === 'confirm-remove-person') {
+    const btn = document.getElementById('confirm-remove-person');
+    if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
+    api('DELETE', `/members/${encodeURIComponent(el.dataset.rpid)}`).then(() => {
+      const rid = el.dataset.rpid;
+      TASKS.forEach(t => { if (String(t.assignee) === String(rid)) t.assignee = ''; });
+      PEOPLE = PEOPLE.filter(x => String(x.id) !== String(rid));
+      WS_MEMBERS = WS_MEMBERS.filter(x => String(x.id) !== String(rid));
+      closeModal(); render(); loadMembers();
+      toast('✔ Person removed — their tasks are now unassigned');
+    }).catch(err => {
+      if (btn) { btn.disabled = false; btn.textContent = 'Remove'; }
+      toast(`⚠ ${err.message}`);
+    });
+    return;
+  }
 
   if (el.id === 'save-toggle') {
     const t = byIdx(+(el.dataset.idx ?? 0));
@@ -2220,20 +2166,6 @@ document.body.addEventListener('change', (e) => {
       showUndoToast(`Status → ${t.progress}`);
       undoStack.push({ label: `Status change`, run: () => { t.progress = old; patchTask(t, { progress: old }); render(); } });
     }
-  }
-  /* Task details panel → Reassign (admins only; lists members + pending invites) */
-  if (e.target.id === 'prop-assignee') {
-    const idx = +e.target.dataset.idx;
-    const t = TASKS.find(x => x.idx === idx);
-    if (!t) return;
-    const old = t.assignee == null ? '' : String(t.assignee);
-    const nv = e.target.value;
-    if (nv === old) return;
-    t.assignee = nv;                          // "" = Unassigned (server stores NULL)
-    patchTask(t, { assignee: nv }, 'Reassign not saved');
-    if ($('#board-body')) renderBoardBody(); else render();
-    toast(nv ? `👤 Reassigned to ${personById(nv).name}` : 'Task unassigned');
-    undoStack.push({ label: 'Reassignment', run: () => { t.assignee = old; patchTask(t, { assignee: old }); render(); } });
   }
 });
 
@@ -2575,7 +2507,7 @@ document.body.addEventListener('submit', (e) => {
         /* Success state inside the modal: confirmation note + invite link
            (for pending invites) instead of closing immediately. */
         showAddPersonSuccess(r);
-        refreshAssigneeSelects();                   // newly added/invited person is assignable
+        render();                                   // refresh views behind the modal
         toast(r.joined ? `✔ ${r.person.name} added to the workspace` : `✉ Invitation created for ${r.person.email}`);
       })
       .catch(err => { btn.disabled = false; btn.textContent = 'Add person'; setFormError('ap-error', err.message); });
@@ -2713,15 +2645,6 @@ async function loadBootstrap() {
     if (d.user) {
       ME = d.user.id;                                       // session restored via cookie → /api/auth/me path
       WS = d.workspace || null;
-      /* Hydrate server-persisted channels so custom channels survive reloads.
-         Bootstrap only ships the user's own workspace rows, so it is safe to
-         drop the static fallback entries that aren't on the server anymore. */
-      if (d.channels && typeof d.channels === 'object') {
-        CHANNELS = {};
-        for (const [key, meta] of Object.entries(d.channels)) {
-          CHANNELS[key] = { topic: (meta && meta.topic) || '' };
-        }
-      }
       try { localStorage.setItem('th_session_hint', '1'); } catch (_) {}
       hideLoginScreen();
     } else {
