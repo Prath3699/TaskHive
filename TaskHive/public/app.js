@@ -1841,6 +1841,50 @@ function setSubmitting(btnSel, busy, label = 'Save') {
   b.textContent = busy ? 'Working…' : label;
 }
 
+/* ---- "Add person" modal: success state ----------------------------------
+   After a successful submit the form is replaced by a success panel. For
+   email invites we also show the invite link so it can be copied and sent
+   manually (the server has no mail delivery — sharing the link IS the
+   invitation). The signed-up invitee claims the pending invite by email on
+   signup (claimInvitationsForUser), so the link points at the sign-up page
+   with the invitee's email pre-filled. */
+function buildInviteLink(email) {
+  const origin = (location.origin && location.origin !== 'null')
+    ? location.origin
+    : 'https://taskhive.app';
+  return `${origin}/#/signup?email=${encodeURIComponent(email)}`;
+}
+
+function showAddPersonSuccess(r) {
+  const body = $('#modal-body');
+  if (!body) return;
+  const p = r.person || {};
+  const invited = !!r.invited;                 // false => they already had an account (joined)
+  const link = invited ? buildInviteLink(p.email || '') : '';
+  body.innerHTML = `
+    <div class="invite-note" role="status">
+      <p class="invite-note-title">${invited
+        ? `✉ Invitation created for <strong>${esc(p.name || p.email || '')}</strong>`
+        : `✔ ${esc(p.name || '')} joined the workspace`}</p>
+      <p class="muted">${invited
+        ? `${esc(p.email || '')} was added as a pending invite (${esc(p.role || 'member')}). They will show up as <em>Invited</em> once they sign up.`
+        : 'They were added with their existing account and are active now.'}</p>
+    </div>
+    ${invited ? `
+    <label class="invite-label">Invite link
+      <div class="share-link-row">
+        <input id="invite-link" type="text" readonly value="${esc(link)}" aria-label="Invite link" />
+        <button id="copy-invite-link" class="btn btn-primary btn-sm" type="button">Copy link</button>
+      </div>
+    </label>
+    <p class="st-hint">Share this link with ${esc(p.email || 'them')} — opening it takes them to sign up, which activates the invitation.</p>` : ''}
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="ap-done" type="button">Done</button>
+    </div>`;
+  const done = $('#ap-done');
+  if (done) done.focus();
+}
+
 /* ============================ EVENT DELEGATION ============================ */
 
 document.body.addEventListener('click', (e) => {
@@ -1945,6 +1989,17 @@ document.body.addEventListener('click', (e) => {
     if (!v) return toast('Enter an email first');
     $('#share-email').value = ''; return toast(`Invite sent to ${v}`);
   }
+  /* Add-person success state: copy the invite link / dismiss the modal */
+  if (el.id === 'copy-invite-link') {
+    const inp = $('#invite-link');
+    if (!inp) return;
+    const done = () => toast('Invite link copied to clipboard');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(inp.value).then(done, () => fallbackCopy(inp, done));
+    } else fallbackCopy(inp, done);
+    return;
+  }
+  if (el.id === 'ap-done') { closeModal(); return; }
   if (el.id === 'share-btn') {
     const title = el.closest('.board')?.querySelector('.project-title')?.textContent || 'Q3 Plan';
     return showShareModal(title);
@@ -2517,7 +2572,10 @@ document.body.addEventListener('submit', (e) => {
           ? [...PEOPLE.filter(p => p.email !== r.person.email), r.person]
           : [...PEOPLE, r.person];
         loadMembers();                              // refresh Settings → People list
-        closeModal(); render();
+        /* Success state inside the modal: confirmation note + invite link
+           (for pending invites) instead of closing immediately. */
+        showAddPersonSuccess(r);
+        refreshAssigneeSelects();                   // newly added/invited person is assignable
         toast(r.joined ? `✔ ${r.person.name} added to the workspace` : `✉ Invitation created for ${r.person.email}`);
       })
       .catch(err => { btn.disabled = false; btn.textContent = 'Add person'; setFormError('ap-error', err.message); });
