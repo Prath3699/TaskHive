@@ -914,6 +914,27 @@ function trialDaysLeft() {
   const ms = Date.now() - new Date(WS.createdAt).getTime();
   return Math.max(0, TRIAL_LEN_DAYS - Math.floor(ms / 86400e3));
 }
+/* Gate the "Add person" menu item: only workspace owners/admins may add people.
+   Non-admins get it hidden; in the read-only demo workspace it stays visible
+   but disabled with a tooltip explaining why. Re-applied on every render(), so
+   it survives topbar re-renders and route changes. */
+function canManagePeople() {
+  return !!(WS && (WS.role === 'admin' || WS.role === 'owner') && !WS.readOnly);
+}
+function syncAddPersonItem() {
+  const btn = document.querySelector('#new-split-menu [data-new="person"]');
+  if (!btn) return;
+  const readOnlyDemo = !!(WS && WS.readOnly);
+  if (canManagePeople()) {
+    btn.hidden = false; btn.disabled = false; btn.removeAttribute('title');
+  } else if (readOnlyDemo) {
+    btn.hidden = false; btn.disabled = true;
+    btn.title = 'The demo workspace is read-only — create your own account to add people';
+  } else {
+    btn.hidden = true; btn.disabled = true;
+  }
+}
+
 function updateTrialCard() {
   const card = document.querySelector('.trial-card');
   if (!card) return;
@@ -1048,6 +1069,7 @@ function render() {
   const fn = routes[name] || routes.home;
   currentRoute = name;
   updateTrialCard();
+  syncAddPersonItem();   // gate "Add person" (admin-only / demo tooltip) every render
   // Show skeletons when navigating before bootstrap data has arrived.
   // (If loadBootstrap already painted them, keep its markup — don't re-inject.)
   if (!PEOPLE.length && !document.body.classList.contains('show-login') && !pageEl.querySelector('.sk-row,.sk-card,.sk-col')) {
@@ -1646,6 +1668,73 @@ function slugify(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace
 
 /* ============================ GLOBAL ACTIONS ============================ */
 
+/* ---- workspace people: shared state + helpers (assignee dropdowns, People list) ----
+   PEOPLE is hydrated from GET /api/bootstrap and refreshed by loadMembers()
+   after every add/remove, so newly added people (active OR invited) appear
+   immediately in every Assignee dropdown without a page reload. */
+const normEmail = (s) => String(s == null ? '' : s).trim().toLowerCase();
+
+async function loadMembers() {
+  try {
+    const list = await api('GET', '/members');
+    if (Array.isArray(list)) PEOPLE = list;
+  } catch (_) { /* keep the last known list on network failure */ }
+  renderPeopleList();               // refresh Settings → People if mounted
+  syncAddPersonItem();              // re-apply admin gating after data changes
+}
+
+function personStatus(p) {
+  if (!p) return '';
+  if (p.invited || p.status === 'invited' || String(p.id).startsWith('inv-')) return 'invited';
+  return 'active';
+}
+
+/* Options for any Assignee <select>: "Unassigned" first, then active members,
+   then pending invites (marked), excluding already-removed people. */
+function assigneeOptionsHtml(current) {
+  const cur = current == null ? '' : String(current);
+  const opt = (p, invited) =>
+    `<option value="${esc(p.id)}"${cur === String(p.id) ? ' selected' : ''}>${esc(p.name)}${invited ? ' (invited)' : ''}</option>`;
+  const act = PEOPLE.filter(p => personStatus(p) === 'active').map(p => opt(p, false));
+  const inv = PEOPLE.filter(p => personStatus(p) === 'invited').map(p => opt(p, true));
+  return `<option value=""${cur === '' ? ' selected' : ''}>Unassigned</option>` + act.join('') + inv.join('');
+}
+
+/* Re-render ONLY the assignee selects that are currently open, so adding or
+   removing a person updates the New task dialog / task panel live. */
+function refreshAssigneeSelects() {
+  document.querySelectorAll('select[data-assignee-select]').forEach(sel => {
+    sel.innerHTML = assigneeOptionsHtml(sel.value);
+  });
+}
+
+/* Settings → People section markup (rendered async so it survives re-renders). */
+function peopleSectionHtml() {
+  const canManage = canManagePeople();
+  const rows = PEOPLE.map(p => {
+    const st = personStatus(p);
+    const role = esc(p.role || 'member');
+    return `<li class="people-row">
+      <span class="avatar avatar-sm" style="--a:${esc(p.color || '#8a93a6')}" aria-hidden="true">${esc(p.initials || '?')}</span>
+      <span class="people-id"><strong>${esc(p.name)}</strong><small>${esc(p.email || '')}</small></span>
+      <span class="people-role">${role}</span>
+      <span class="people-status ${st}">${st === 'invited' ? 'Invited' : 'Active'}</span>
+      ${canManage && String(p.id) !== String(ME)
+        ? `<button class="btn btn-ghost btn-sm people-remove" data-rmperson="${esc(p.id)}" aria-label="Remove ${esc(p.name)} from workspace">Remove</button>`
+        : ''}
+    </li>`;
+  }).join('');
+  return `<ul class="people-list">${rows || '<li class="people-empty muted">No people yet.</li>'}</ul>` +
+    (canManage
+      ? `<button class="btn btn-secondary btn-sm people-add-btn" data-new="person-open">＋ Add person</button>`
+      : `<p class="people-note muted">Only workspace admins can add or remove people.</p>`);
+}
+
+function renderPeopleList() {
+  const box = document.getElementById('people-list');
+  if (box) box.innerHTML = peopleSectionHtml();
+}
+
 function showUpgradeModal() {
   openModal('Upgrade plan', `
     <p class="modal-lead">Unlock unlimited projects, guests and history.</p>
@@ -1671,14 +1760,13 @@ function showNewFeatureModal() {
   /* Assignees = real workspace members (incl. people added via "Add person"),
      with "Unassigned" first; Project list always starts with "No project";
      Urgency defaults to Medium ("Moderate"). */
-  const assigneeOpts = `<option value="">Unassigned</option>` + PEOPLE.map(p => `<option value="${esc(p.id)}"${p.id === ME ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
   const projOpts = `<option value="">No project</option>` + PROJECTS.map(p => `<option value="${esc(p.id)}"${p.id === currentProject ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
   openModal('New task', `
     <form id="new-feature-form">
       <label>Name<input id="nf-name" type="text" required placeholder="e.g. Add keyboard shortcuts" /></label>
       <label>Progress<select id="nf-progress">${Object.keys(PROGRESS).map(k => `<option>${k}</option>`).join('')}</select></label>
       <label>Urgency<select id="nf-urgency">${Object.keys(URGENCY).map(k => `<option${k === 'Moderate' ? ' selected' : ''}>${k}</option>`).join('')}</select></label>
-      <label>Assignee<select id="nf-assignee">${assigneeOpts}</select></label>
+      <label>Assignee<select id="nf-assignee" data-assignee-select>${assigneeOptionsHtml(ME)}</select></label>
       <label>Project<select id="nf-project">${projOpts}</select></label>
       <button type="submit" class="btn btn-primary">Create task</button>
     </form>`);
