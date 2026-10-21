@@ -29,10 +29,31 @@
   --sel-row: #f3f0ff;         /* selected table row */
   --kbd-bg: #f0f0f4;
   --unread-item: #f8f6ff;
+  --shadow-card: 0 1px 2px rgba(0,0,0,.06);   /* nav active / card shadow */
   --critical: #ff3232;        /* urgency pill */
   --moderate: #db672d;        /* urgency pill */
   --minor: #beefc8;           /* urgency pill */
+
+  /* ---- design tokens: spacing / radii / shadows / type scale ----
+     Light is the DEFAULT (:root). Dark mode = html.dark class, or no stored
+     choice + prefers-color-scheme: dark (see the media block below). */
   --radius: 10px;
+  --radius-sm: 6px;
+  --radius-lg: 16px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --shadow-sm: 0 1px 3px rgba(20,20,40,.08);
+  --shadow-md: 0 4px 14px rgba(20,20,40,.12);
+  --shadow-lg: 0 20px 60px rgba(0,0,0,.3);
+  --font-xs: 11px;
+  --font-sm: 12px;
+  --font-md: 14px;
+  --font-lg: 18px;
+  --font-xl: 22px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -43,7 +64,7 @@ body {
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--font-md);
   line-height: 1.45;
 }
 
@@ -92,7 +113,7 @@ body {
   display: block;
 }
 
-.org-name { font-weight: 600; font-size: 14px; }
+.org-name { font-weight: 600; font-size: var(--font-md); }
 
 .org-status {
   display: flex;
@@ -133,7 +154,7 @@ body {
 
 .nav-item:hover { background: var(--hover); color: var(--text); }
 
-.nav-item.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+.nav-item.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow-card); }
 
 .nav-section {
   font-size: 11px;
@@ -202,7 +223,7 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-.crumbs { display: flex; align-items: center; gap: 8px; font-size: 14px; white-space: nowrap; }
+.crumbs { display: flex; align-items: center; gap: 8px; font-size: var(--font-md); white-space: nowrap; }
 .crumbs a { color: var(--text-3); text-decoration: none; }
 .crumbs a:hover { color: var(--text); }
 .crumbs .current { color: var(--text); font-weight: 600; }
@@ -656,10 +677,10 @@ button.pill.urgency-cell:focus-visible { outline: 2px solid var(--accent); outli
 }
 .modal {
   background: var(--surface); border-radius: 12px; width: min(560px, 92vw);
-  max-height: 84vh; overflow: auto; padding: 20px 24px; box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  max-height: 84vh; overflow: auto; padding: 20px 24px; box-shadow: var(--shadow-lg);
 }
 .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.modal-head h2 { font-size: 18px; margin: 0; }
+.modal-head h2 { font-size: var(--font-lg); margin: 0; }
 .icon-btn { background: none; border: none; font-size: 16px; cursor: pointer; color: var(--text-2); padding: 4px 8px; border-radius: 6px; }
 .icon-btn:hover { background: #f0eefe; color: var(--accent); }
 .modal label { display: block; font-size: 13px; color: var(--text-2); margin: 10px 0; }
@@ -688,8 +709,8 @@ kbd { background: var(--kbd-bg); border: 1px solid #ddd; border-radius: 4px; pad
 /* pages */
 .page-pad { padding: 24px 28px; overflow: auto; flex: 1; display: block; }
 .page-pad.narrow { max-width: 640px; }
-.page-head h1 { font-size: 22px; margin: 0 0 4px; }
-.page-head p { color: var(--text-2); font-size: 14px; margin: 0 0 8px; }
+.page-head h1 { font-size: var(--font-xl); margin: 0 0 4px; }
+.page-head p { color: var(--text-2); font-size: var(--font-md); margin: 0 0 8px; }
 .section-title { font-size: 15px; margin: 22px 0 10px; }
 
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 14px; }
@@ -955,6 +976,28 @@ html.dark {
   --sel-row: #2b2545;
   --kbd-bg: #2b2b3a;
   --unread-item: #262238;
+  --shadow-card: none;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.4);
+  --shadow-md: 0 4px 14px rgba(0,0,0,.45);
+  --shadow-lg: 0 20px 60px rgba(0,0,0,.55);
+}
+
+/* ============================ THEME: prefers-color-scheme fallback ============================ */
+/* Light is the :root default. When the user has NOT chosen a theme explicitly
+   (JS leaves <html> classless), follow the OS preference for dark. */
+@media (prefers-color-scheme: dark) {
+  html:not(.dark):not(.light) { color-scheme: dark; }
+}
+@media (prefers-color-scheme: light) {
+  html:not(.dark):not(.light) { color-scheme: light; }
+}
+
+/* AA contrast fixes for the light theme (text-on-surface tokens) */
+:root, html.light {
+  --critical: #d92626;        /* was #ff3232 — below 4.5:1 on white */
+  --moderate: #b85a24;        /* was #db672d */
+  --minor: #2f7a44;           /* was #beefc8 text on tinted bg */
+  --accent-text: #6d54e6;     /* AA accent for text/icons on light surfaces */
 }
 
 html.dark body { background: var(--bg); color: var(--text); }
@@ -1071,7 +1114,7 @@ html.dark .mt-hero {
   display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 8px 10px; margin-bottom: 18px;
-  box-shadow: 0 1px 3px rgba(20,20,40,.04);
+  box-shadow: var(--shadow-sm);
 }
 .mt-search-wrap { position: relative; display: flex; align-items: center; }
 .mt-search-icon { position: absolute; left: 10px; color: var(--text-3); pointer-events: none; }
@@ -1104,7 +1147,7 @@ html.dark .mt-chip { background: rgba(149,126,255,.14); }
   transition: background .15s, color .15s, box-shadow .15s;
 }
 .mt-seg-btn:hover { color: var(--text); }
-.mt-seg-btn.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 4px rgba(20,20,40,.12); }
+.mt-seg-btn.active { background: var(--surface); color: var(--accent); box-shadow: var(--shadow-sm); }
 html.dark .mt-seg-btn.active { box-shadow: 0 1px 4px rgba(0,0,0,.4); }
 
 /* grouped sections */
