@@ -2283,10 +2283,24 @@ document.body.addEventListener('keydown', (e) => {
   cb.dispatchEvent(new Event('change', { bubbles: true }));
 });
 
-function toggleDarkMode(force) {
+/* Apply a resolved dark-mode value to <html>: BOTH the legacy `dark` class and
+   the authoritative data-theme attribute (CSS theme blocks + color-scheme hang
+   off [data-theme]), plus the browser UI tint in <meta name="theme-color">. */
+function applyTheme(on) {
   const html = document.documentElement;
-  const on = typeof force === 'boolean' ? force : !html.classList.contains('dark');
   html.classList.toggle('dark', on);
+  html.setAttribute('data-theme', on ? 'dark' : 'light');
+  const m = document.getElementById('meta-theme-color');
+  if (m) m.setAttribute('content', on ? '#12141c' : '#f5f5f5');
+}
+
+function toggleDarkMode(force) {
+  const on = typeof force === 'boolean' ? force : !document.documentElement.classList.contains('dark');
+  /* short color cross-fade on manual switch (no-op under reduced motion) */
+  const root = document.documentElement;
+  root.classList.add('theme-anim');
+  setTimeout(() => root.classList.remove('theme-anim'), 220);
+  applyTheme(on);
   try { localStorage.setItem('darkMode', on ? '1' : '0'); } catch (_) {}
   uiPrefs.darkMode = on;
   if (ME) patchPrefs(); // persist per-user theme to the backend
@@ -2303,7 +2317,7 @@ function toggleDarkMode(force) {
   let on = false;
   try { on = localStorage.getItem('darkMode') === '1'; } catch (_) {}
   // Server-persisted preference wins once bootstrap has run (_themeFromServer).
-  if (!_themeFromServer) document.documentElement.classList.toggle('dark', on);
+  if (!_themeFromServer) applyTheme(on);
 })();
 
 /* Boot: hydrate in-memory state from GET /api/bootstrap, then render.
@@ -2354,7 +2368,7 @@ async function loadBootstrap() {
     if (d.ui && typeof d.ui === 'object') uiPrefs = { ...uiPrefs, ...d.ui };
     // Apply server-persisted theme once per session (before first paint of settings)
     if (uiPrefs.darkMode !== null) {
-      document.documentElement.classList.toggle('dark', !!uiPrefs.darkMode);
+      applyTheme(!!uiPrefs.darkMode);
       _themeFromServer = true;
     }
     INBOX_ITEMS.forEach(it => { if (it.unread === false) readFlags[it.id] = true; });
