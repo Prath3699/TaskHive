@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" id="meta-theme-color" content="#f5f5f5" />
+  <title>TaskHive — Issue Tracker</title>
+  <!-- Theme bootstrap: runs BEFORE first paint so there is no flash of the
+       wrong theme. Resolves the saved choice (localStorage) or the OS
+       preference ("System" = no explicit save), then sets data-theme + class. -->
+  <script>
+  (function () {
+    var d = document, h = d.documentElement;
+    function sysDark() { try { return !!(window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches); } catch (_) { return false; } }
+    var on = null; // null = "System" (no explicit choice saved)
+    try { var v = localStorage.getItem('darkMode'); if (v === '1') on = true; else if (v === '0') on = false; } catch (_) {}
+    if (on === null) on = sysDark();
+    h.classList.toggle('dark', on);
+    h.setAttribute('data-theme', on ? 'dark' : 'light');
+    function meta() { var m = d.getElementById('meta-theme-color'); if (m) m.setAttribute('content', on ? '#12141c' : '#f5f5f5'); }
+    if (d.readyState !== 'loading') meta(); else d.addEventListener('DOMContentLoaded', meta);
+    /* Live "System" tracking: follow OS changes only while no explicit choice is saved */
+    try {
+      var mq = matchMedia('(prefers-color-scheme: dark)');
+      var onChange = function (e) {
+        var saved = null;
+        try { var v = localStorage.getItem('darkMode'); saved = (v === '1' || v === '0'); } catch (_) {}
+        if (saved) return;
+        on = e.matches;
+        h.classList.toggle('dark', on);
+        h.setAttribute('data-theme', on ? 'dark' : 'light');
+        meta();
+      };
+      if (mq.addEventListener) mq.addEventListener('change', onChange);
+      else if (mq.addListener) mq.addListener(onChange);
+    } catch (_) {}
+  })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+
+    <a class="skip-link" href="#page">Skip to main content</a>
+    <div id="sidebar-scrim" class="sidebar-scrim" hidden></div>
+    <!-- ======================= SIDEBAR ======================= -->
+    <aside class="sidebar" role="navigation" aria-label="Primary">
+      <button id="sidebar-close" class="icon-btn sidebar-close" aria-label="Close menu">✕</button>
+      <div class="org">
+        <div class="org-avatar" aria-hidden="true">
+          <!-- Beehive logo -->
+          <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M6 8.5h16M4.5 14h19M6 19.5h16" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+            <path d="M8 4h12l3 4.5H5L8 4Zm-3.5 5.5h19L26 14H2l2.5-4.5ZM5 19.5h18l-2.5 4.5H7.5L5 19.5Z" fill="#fff" opacity=".28"/>
+          </svg>
+        </div>
+        <div class="org-info">
+          <div class="org-name">TaskHive</div>
+          <div class="org-status"><span class="sync-dot"></span>Project Tracker</div>
+        </div>
+      </div>
+
+      <nav class="side-nav">
+        <a href="#/home" data-route="home" class="nav-item">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 10 3l7 6.5"/><path d="M5 8.5V17h10V8.5"/></svg>
+          Home
+        </a>
+        <a href="#/inbox" data-route="inbox" class="nav-item">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="m3.5 6 6.5 5 6.5-5"/></svg>
+          Inbox
+        </a>
+        <a href="#/saved" data-route="saved" class="nav-item">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10a1 1 0 0 1 1 1v13l-6-3.5L4 17V4a1 1 0 0 1 1-1Z"/></svg>
+          Saved items
+        </a>
+
+        <div class="nav-section">Workspace</div>
+        <a href="#/mytasks" data-route="mytasks" class="nav-item">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 10h12M10 4v12"/></svg>
+          My tasks
+        </a>
+        <a href="#/projects" data-route="projects" class="nav-item">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/></svg>
+          Projects
+        </a>
+        <a href="#/calendar" data-route="calendar" class="nav-item">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="4" width="14" height="13" rx="2"/><path d="M3 8h14M7 2.5V5M13 2.5V5"/></svg>
+          Calendar
+        </a>
+        <a href="#/roadmaps" data-route="roadmaps" class="nav-item">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 15c4-8 10-8 14-8"/><circle cx="16" cy="7" r="1.6"/></svg>
+          Roadmaps
+        </a>
+
+        <div class="nav-section">Your channels</div>
+        <a href="#/channel/engineering" data-route="channel" data-param="engineering" class="nav-item channel"><span class="ch-hash">#</span>Engineering</a>
+        <a href="#/channel/docs" data-route="channel" data-param="docs" class="nav-item channel"><span class="ch-hash">#</span>Docs</a>
+        <a href="#/channel/teams" data-route="channel" data-param="teams" class="nav-item channel"><span class="ch-hash">#</span>Teams</a>
+        <a href="#/channel/initiatives" data-route="channel" data-param="initiatives" class="nav-item channel"><span class="ch-hash">#</span>Initiatives</a>
+        <a href="#/channel/active-sprint" data-route="channel" data-param="active-sprint" class="nav-item channel"><span class="ch-hash">#</span>Active sprint</a>
+        <a href="#/channel/design" data-route="channel" data-param="design" class="nav-item channel"><span class="ch-hash">#</span>Design</a>
+        <a href="#/channel/marketing" data-route="channel" data-param="marketing" class="nav-item channel"><span class="ch-hash">#</span>Marketing</a>
+      </nav>
+
+      <div class="trial-card">
+        <p>There are <strong>6 days</strong> left in your trial.<br />Upgrade for unlimited access.</p>
+        <button id="upgrade-btn" class="btn btn-primary btn-sm">Upgrade</button>
+      </div>
+
+      <div class="side-footer">
+        <a href="#/settings" data-route="settings" class="nav-item">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="3"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M15.3 4.7l-1.6 1.6M6.3 13.7l-1.6 1.6"/></svg>
+          Settings
+        </a>
+        <a href="#/help" data-route="help" class="nav-item">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.2 2.2 0 1 1 3.2 2c-.7.5-1 .9-1 1.9M10 14.3v.2"/></svg>
+          Help &amp; support
+        </a>
+      </div>
+    </aside>
+
+    <!-- ======================= MAIN AREA ======================= -->
+    <main class="main">
+
+      <!-- Top bar -->
+      <header class="topbar">
+        <button id="menu-btn" class="icon-btn menu-btn" aria-label="Open menu" aria-expanded="false">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5h14M3 10h14M3 15h14"/></svg>
+        </button>
+        <nav class="crumbs" id="crumbs"></nav>
+        <div class="search" id="search-wrap">
+          <button id="search-icon-btn" class="icon-btn search-icon-btn" aria-label="Open search" aria-expanded="false">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="9" cy="9" r="5.5"/><path d="m13.5 13.5 3.5 3.5"/></svg>
+          </button>
+          <svg class="search-ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="m13.5 13.5 3.5 3.5"/></svg>
+          <input id="global-search" type="text" role="combobox" aria-expanded="false" aria-controls="search-results" aria-autocomplete="list" aria-label="Search tasks, projects, people and channels" placeholder="Search tasks, projects, people…" autocomplete="off" />
+          <kbd class="kbd-hint kbd-ctrl" aria-hidden="true">Ctrl K</kbd>
+          <kbd class="kbd-hint kbd-slash" aria-hidden="true">/</kbd>
+          <div id="search-results" class="search-results hidden" role="listbox" aria-label="Search results"></div>
+        </div>
+        <div class="new-split" id="new-split">
+          <button id="new-task-btn" class="btn btn-primary split-main" aria-label="Create a new task">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 10h12M10 4v12"/></svg>
+            <span>New task</span>
+            <kbd class="kbd-hint" aria-hidden="true">C</kbd>
+          </button><button id="new-split-toggle" class="btn btn-primary split-caret" aria-label="More create options" aria-haspopup="menu" aria-expanded="false">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg>
+          </button>
+          <div id="new-split-menu" class="split-menu hidden" role="menu" aria-label="Create">
+            <button role="menuitem" data-new="task">New task <kbd>C</kbd></button>
+            <button role="menuitem" data-new="project">New project</button>
+            <button role="menuitem" data-new="channel">New channel</button>
+            <button role="menuitem" data-new="person" hidden>Add person</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Page content injected by the router -->
+      <div class="content" id="page">
+        <div id="boot-loading" class="boot-loading"><div class="boot-spinner"></div><p>Loading workspace…</p><p class="boot-hint hidden">Waking up the server — this can take up to a minute on the free plan.</p></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Floating "New task" button (phones only, see styles.css) -->
+  <button id="new-fab" class="new-fab" aria-label="Create a new task">
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 10h12M10 4v12"/></svg>
+  </button>
+
+  <!-- ======================= MODAL ======================= -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2 id="modal-title">New task</h2>
+        <button id="modal-close" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <!-- ======================= LOGIN OVERLAY (Phase 2) ======================= -->
+  <div id="login-screen" class="login-screen" aria-hidden="true"></div>
+
+  <script src="app.js"></script>
+  <!-- Mobile bottom tab bar (phones only, see styles.css) -->
+  <nav class="bottom-tabs" aria-label="Primary navigation">
+    <a href="#/home" data-route="home" class="bt-item"><span class="bt-ico" aria-hidden="true">🏠</span><span>Home</span></a>
+    <a href="#/inbox" data-route="inbox" class="bt-item"><span class="bt-ico" aria-hidden="true">📥</span><span>Inbox</span></a>
+    <a href="#/mytasks" data-route="mytasks" class="bt-item"><span class="bt-ico" aria-hidden="true">✅</span><span>My Tasks</span></a>
+    <a href="#/projects" data-route="projects" class="bt-item"><span class="bt-ico" aria-hidden="true">📁</span><span>Projects</span></a>
+    <a href="#/roadmaps" data-route="roadmaps" class="bt-item"><span class="bt-ico" aria-hidden="true">🗺️</span><span>Roadmaps</span></a>
+  </nav>
+</body>
+</html>

@@ -1,0 +1,9 @@
+.env.local
+.env
+*.env.*
+!.env.example
+*.log
+*.tmp
+*.db-shm
+*.db-wal
+*.old-demo
