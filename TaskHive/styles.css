@@ -1456,6 +1456,8 @@ html.dark .mt-seg-btn.active, html[data-theme="dark"] .mt-seg-btn.active { box-s
   animation: boot-spin .8s linear infinite;
 }
 @keyframes boot-spin { to { transform: rotate(360deg); } }
+.boot-loading .boot-hint { color: var(--text-3, #7a8699); font-size: 12.5px; max-width: 34ch; text-align: center; }
+.boot-error small { display: block; margin: 8px 0 14px; color: var(--text-3); }
 
 /* ===================== LOGIN SCREEN (Phase 2) ===================== */
 /* Fully themed via --login-* tokens: light theme = brand-blue gradient with a

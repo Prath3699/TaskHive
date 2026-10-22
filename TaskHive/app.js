@@ -158,16 +158,33 @@ const ATTACHMENTS = [
 // before app.js loads, e.g. <script>window.TASKHIVE_API='https://taskhive-api.onrender.com'</script>
 const API_BASE = (window.TASKHIVE_API || '') + '/api';
 
-async function api(method, path, body) {
+const DEFAULT_API_TIMEOUT_MS = 20000; // no request may hang the UI silently forever
+
+async function api(method, path, body, timeoutMs = DEFAULT_API_TIMEOUT_MS) {
   /* paths starting with '/' are API-relative (/tasks → /api/tasks);
      paths already carrying the /api prefix pass through untouched. */
   const url = path.startsWith('/api') ? API_BASE.replace(/\/api$/, '') + path : API_BASE + path;
-  const res = await fetch(url, {
-    method,
-    credentials: 'same-origin',   // always send the httpOnly session cookie
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  // Abort on a timer so a sleeping/hung server rejects fast instead of hanging the tab.
+  const signal = (typeof AbortSignal !== 'undefined' && AbortSignal.timeout)
+    ? AbortSignal.timeout(timeoutMs)
+    : (AbortController ? new AbortController().signal : undefined);
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      credentials: 'same-origin',   // always send the httpOnly session cookie
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal,
+    });
+  } catch (err) {
+    if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      const e = new Error('Request timed out');
+      e.code = 'timeout';
+      throw e;
+    }
+    throw err; // network failure — caller decides (bootstrap retries on these)
+  }
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try { msg = (await res.json()).error || msg; } catch (_) {}
@@ -2616,6 +2633,64 @@ function toggleDarkMode(force) {
 /* Boot: hydrate in-memory state from GET /api/bootstrap, then render.
    Phase 2: bootstrap also returns the current session user; unauthenticated
    visitors get the login screen instead of workspace data. */
+/* ---- Cold-start UX helpers (Render free tier can take ~60s to wake up) ---- */
+const BOOT_TIMEOUT_MS   = 90000;  // give up retrying after ~90 seconds
+const WAKEUP_MSG_AFTER  = 5000;   // switch the boot screen copy after ~5s
+
+function bootLoadingEl() {
+  if (!document.body.classList.contains('show-login')) return null; // login overlay covers it anyway
+  let el = $('#boot-loading');
+  if (!el && pageEl) {
+    el = document.createElement('div');
+    el.id = 'boot-loading'; el.className = 'boot-loading';
+    el.innerHTML = '<div class="boot-spinner"></div><p>Loading workspace…</p>';
+    pageEl.appendChild(el);
+  }
+  return el;
+}
+function setBootMessage(msg) {
+  const el = bootLoadingEl();
+  const p = el && el.querySelector('p');
+  if (p && p.textContent !== msg) p.textContent = msg;
+}
+function removeBootLoading() {
+  const el = $('#boot-loading');
+  if (el) el.remove();
+}
+function showBootError(err) {
+  removeBootLoading();
+  if (!pageEl) return;
+  const why = err && err.message ? String(err.message) : 'Unknown error';
+  pageEl.innerHTML = `<section class="page-pad"><div class="empty-state boot-error">⚠ Could not reach the server.<br>
+    <small>${why} — the free plan can take up to a minute to wake up.</small><br>
+    <button id="boot-retry" class="btn btn-primary" type="button">Retry</button></div></section>`;
+  const btn = $('#boot-retry');
+  if (btn) btn.addEventListener('click', () => {
+    btn.disabled = true; btn.textContent = 'Retrying…';
+    loadBootstrap();
+  });
+}
+
+/* One bootstrap attempt with backoff retries for network failures/timeouts
+ * (sleeping server), up to BOOT_TIMEOUT_MS total. HTTP errors (401 etc.) are
+ * returned immediately — retrying those would not help. */
+async function fetchBootstrapWithRetry(onInfo) {
+  const started = Date.now();
+  let delay = 800;
+  for (;;) {
+    try {
+      return await api('GET', '/bootstrap', undefined, 15000);
+    } catch (err) {
+      const retriable = !err.status || err.code === 'timeout'; // network error / timeout
+      const elapsed = Date.now() - started;
+      if (!retriable || elapsed + delay > BOOT_TIMEOUT_MS) throw err;
+      if (onInfo) onInfo(err, elapsed);
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(Math.round(delay * 1.7), 8000); // 0.8s → ~1.4 → 2.3 → … capped 8s
+    }
+  }
+}
+
 async function loadBootstrap() {
   // Skeleton placeholders: shown while bootstrap is in flight for a returning
   // session (cookie present → we know the workspace will render). For a cold
@@ -2633,8 +2708,14 @@ async function loadBootstrap() {
   let hasSession = false;
   try { hasSession = localStorage.getItem('th_session_hint') === '1'; } catch (_) {}
   const skTimer = hasSession ? (showSk(), null) : setTimeout(showSk, 120);
+  // If the first call is still in flight after ~5s, tell the user what's up.
+  const wakeTimer = setTimeout(() => setBootMessage('Waking up the server — this can take up to a minute on the free plan.'), WAKEUP_MSG_AFTER);
   try {
-    const d = await api('GET', '/bootstrap');
+    const d = await fetchBootstrapWithRetry((err, elapsed) => {
+      clearTimeout(skTimer); clearSk();
+      setBootMessage(`Waking up the server — this can take up to a minute on the free plan. (${Math.ceil((BOOT_TIMEOUT_MS - elapsed) / 1000)}s of retries left)`);
+    });
+    clearTimeout(wakeTimer);
     clearTimeout(skTimer);
     PEOPLE        = d.people || [];
     TASKS         = d.tasks || [];
@@ -2669,6 +2750,7 @@ async function loadBootstrap() {
     nextTaskNum = TASKS.length ? Math.max(100, ...TASKS.map(t => parseInt(String(t.id).replace(/\D/g, ''), 10) || 0)) + 1 : 100;
   } catch (err) {
     console.error('bootstrap failed:', err);
+    clearTimeout(wakeTimer);
     clearTimeout(skTimer); clearSk();
     if (err.status === 401) {
       ME = null; WS = null;
@@ -2679,12 +2761,10 @@ async function loadBootstrap() {
       return;
     }
     hideLoginScreen();
-    pageEl.innerHTML = `<section class="page-pad"><div class="empty-state">⚠ Could not reach the server.<br>
-      Start it with <code>npm start</code>, then refresh this page.</div></section>`;
+    showBootError(err); // error state + Retry button (cold start gave up after ~90s)
     return;
   }
-  const loading = $('#boot-loading');
-  if (loading) loading.remove();
+  removeBootLoading();
   updateTrialCard();
   if (!location.hash || /^#\/?(login|signup)?$/.test(location.hash.replace('#', ''))) location.hash = '#/home';
   render();
