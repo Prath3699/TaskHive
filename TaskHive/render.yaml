@@ -1,0 +1,36 @@
+# TaskHive on Render — one web service serves BOTH the frontend and the /api backend,
+# so you get a single URL and no cross-site cookie/CORS problems.
+services:
+  - type: web
+    name: taskhive
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci --omit=dev || npm install --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: TASKHIVE_COOKIE_SECURE   # login cookie is HTTPS-only (Render always serves HTTPS)
+        value: "1"
+      - key: TASKHIVE_TRUST_PROXY     # behind Render's HTTPS proxy — required for Secure cookies + correct client IP for rate limiting
+        value: "1"
+      - key: TASKHIVE_ALLOWED_ORIGINS  # CORS allowlist (comma-separated); same-origin app works without it, set if you add another frontend host
+        value: https://taskhive-4vsl.onrender.com
+      - key: TASKHIVE_DEMO_PASSWORD    # ⚠️ CHANGE THIS in the Render dashboard to a real secret (default is "password")
+        value: change-me-set-a-real-secret
+      # PORT is injected automatically by Render; server.js reads process.env.PORT.
+
+# DATA PERSISTENCE
+# The free plan has NO persistent disk: the database lives on an ephemeral filesystem and is
+# reset whenever the service redeploys or spins down after ~15 min idle (demo data is re-seeded).
+# To keep data permanently: upgrade this service to `plan: starter` and add these two pieces:
+#
+#     envVars:
+#       - key: TASKHIVE_DATA_DIR
+#         value: /var/data/taskhive
+#     disk:
+#       name: taskhive-data
+#       mountPath: /var/data
+#       sizeGB: 1
